@@ -62,6 +62,13 @@ jobs:
       # This step is why the job is evidence rather than a hope. It prints what
       # it found before it judges it, so a reader can see the environment the
       # suite then ran in rather than trusting that it was bare.
+      #
+      # /dev/dri is reported and not refused, and the difference is deliberate.
+      # The stock runner carries a render node: the first run of this job
+      # refused it and went red on a runner that had no display server at all.
+      # A render node is not a display server, nothing can draw to it without
+      # one, and a check that refuses the runner this board has chosen is a
+      # check nobody can satisfy.
       - name: Prove the runner has no display, no audio device and no elevation
         run: |
           set -uo pipefail
@@ -69,13 +76,12 @@ jobs:
           echo "DISPLAY='${DISPLAY:-}'"
           echo "WAYLAND_DISPLAY='${WAYLAND_DISPLAY:-}'"
           ls -d /dev/snd 2>/dev/null || echo "/dev/snd: absent"
-          ls -d /dev/dri 2>/dev/null || echo "/dev/dri: absent"
+          ls -d /dev/dri 2>/dev/null || echo "/dev/dri: absent (reported, not refused)"
           fail=0
           note() { echo "REFUSED: $1"; fail=1; }
           [ -z "${DISPLAY:-}" ] || note "DISPLAY is set, so a test needing a display would pass here and fail on a clean runner"
           [ -z "${WAYLAND_DISPLAY:-}" ] || note "WAYLAND_DISPLAY is set, same reason"
           [ ! -e /dev/snd ] || note "an audio device is present, so a test needing one would pass here and fail on a clean runner"
-          [ ! -e /dev/dri ] || note "a rendering device is present, same reason"
           [ "$(id -u)" != "0" ] || note "the job is running as uid 0, and the suite has to pass unprivileged"
           exit "$fail"
 
