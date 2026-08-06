@@ -1,0 +1,24 @@
+# The linter set, declared here rather than in the workflow, so the same set
+# runs on a contributor's machine and in CI. Running it locally:
+#
+#     go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2 run
+#
+version: "2"
+
+linters:
+  # Name every linter rather than inheriting a default set, so the set moves
+  # when this file moves and not when the tool's defaults do.
+  default: none
+  enable:
+    # Unchecked errors. The largest class of mistake in Go that compiles.
+    - errcheck
+    # Dead code, unused fields and unused parameters.
+    - unused
+    # Assignments whose value is never read.
+    - ineffassign
+    # A large set of correctness and simplification checks.
+    - staticcheck
+  # govet is deliberately absent. The build gate in .github/workflows/build.yml
+  # already runs `go vet ./...` as its warnings-are-errors half, and a diagnostic
+  # reported by two jobs is one a reader has to fix twice and can silence in one
+  # place without noticing.
