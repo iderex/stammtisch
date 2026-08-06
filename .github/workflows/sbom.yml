@@ -1,0 +1,177 @@
+# The bill of materials. An operator running a communications service on their
+# own hardware is the person who most needs to answer whether a published
+# vulnerability touches what they are running, and without a list of what is in
+# the binary that answer is a research project.
+#
+# It runs on every pull request and every push to the default branch rather than
+# at release time, so a release is not the first time the generator runs and a
+# generator that broke three months ago is not discovered on the day it is
+# needed.
+#
+# What the document describes is what SHIPS. The generator walks the packages the
+# build actually reaches and the modules that supply them, so a module that sits
+# in the module graph without any built package importing it is absent, and so is
+# a dependency used only by tests. That is the right set for the question this
+# artifact exists to answer, and it is a narrower set than either `go list -m
+# all` or `go.sum` carries. The two reconciliation steps below are written
+# against that fact rather than around it.
+#
+# Hardened the same way as every other workflow here: read-only permissions at
+# the top level, every action pinned by commit with a version comment, and
+# checkout without persisted credentials.
+name: SBOM
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# Read-only: the job reads the tree and uploads a run artifact. It writes
+# nothing back to the repository.
+permissions:
+  contents: read
+
+# A newer run on the same ref supersedes an in-flight one. Nothing here
+# publishes, so cancelling a superseded run is safe.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # The check-run name is "Generate SBOM" and it is the literal name a required
+  # status check would have to carry. Renaming this job renames the check run and
+  # silently detaches it from any rule that requires it.
+  sbom:
+    name: Generate SBOM
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          # The floor comes from go.mod rather than from a number written here,
+          # so the toolchain the gate uses cannot drift from the one the module
+          # declares.
+          go-version-file: go.mod
+
+      - name: Install the generator
+        # Pinned to an exact version rather than a floating one, for the same
+        # reason the linter is: a generator that updates on its own changes the
+        # document under a pull request that touched nothing. `go install
+        # pkg@version` resolves through the module proxy and the checksum
+        # database and does not read or write this module's go.mod.
+        env:
+          CYCLONEDX_GOMOD_VERSION: v1.9.0
+        run: go install "github.com/CycloneDX/cyclonedx-gomod/cmd/cyclonedx-gomod@${CYCLONEDX_GOMOD_VERSION}"
+
+      - name: Generate the bill of materials
+        run: |
+          set -euo pipefail
+          # Both the exit code and the output are read, because they say
+          # different things and either one alone can be wrong. A generator that
+          # cannot run exits non-zero; a generator that runs and emits nothing
+          # exits zero. Reading only the exit code accepts an empty file as a
+          # clean tree, which is the failure this step exists to prevent.
+          rc=0
+          cyclonedx-gomod mod -json -output sbom.cdx.json . || rc=$?
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::The bill-of-materials generator exited ${rc}. No document was produced."
+            exit 1
+          fi
+          if [ ! -s sbom.cdx.json ]; then
+            echo "::error::The generator exited 0 and produced no output. Failing closed instead of reading an empty document as a tree with nothing in it."
+            exit 1
+          fi
+          # A file with bytes in it is not yet a document. Three assertions,
+          # each of which a broken or truncated generator fails: it parses, it
+          # says which format it is in, and it names the component the rest of
+          # the document hangs off. An empty dependency list is legitimate and is
+          # deliberately NOT asserted on, because this module may genuinely have
+          # no dependencies and a count assertion here would have to be relaxed
+          # to nothing the day it did.
+          if ! jq -e 'type == "object"' sbom.cdx.json > /dev/null; then
+            echo "::error::The generator's output is not a JSON object."
+            exit 1
+          fi
+          if ! jq -e '.bomFormat == "CycloneDX" and (.specVersion | type == "string")' sbom.cdx.json > /dev/null; then
+            echo "::error::The output does not declare itself as CycloneDX with a spec version."
+            exit 1
+          fi
+          if ! jq -e '.metadata.component.name | type == "string" and (length > 0)' sbom.cdx.json > /dev/null; then
+            echo "::error::The document names no subject component. A document that does not say what it describes is not usable."
+            exit 1
+          fi
+          echo "Format: $(jq -r '.bomFormat + " " + .specVersion' sbom.cdx.json)"
+          echo "Subject: $(jq -r '.metadata.component.name' sbom.cdx.json)"
+          echo "Library components: $(jq -r '[.components // [] | .[] | select(.type == "library")] | length' sbom.cdx.json)"
+
+      - name: Reconcile against the module graph the build reaches
+        run: |
+          set -euo pipefail
+          # The transitive set, not the direct one. `go list -deps` expands the
+          # import graph of every package in the module and prints the module
+          # supplying each, so a dependency four levels down appears here exactly
+          # as it appears in the document. `awk NF` rather than `grep -v` drops
+          # the blank lines the template emits for standard-library packages: awk
+          # exits 0 on empty input and grep exits 1, and under `pipefail` an
+          # empty set would otherwise be read as a broken pipeline.
+          go list -deps -f '{{with .Module}}{{if not .Main}}{{.Path}}@{{.Version}}{{end}}{{end}}' ./... \
+            | awk 'NF' | sort -u > expected-modules.txt
+          jq -r '[.components // [] | .[] | select(.type == "library") | "\(.name)@\(.version)"] | sort | .[]' \
+            sbom.cdx.json | sort -u > documented-modules.txt
+          echo "reached by the build: $(wc -l < expected-modules.txt)"
+          echo "in the document:      $(wc -l < documented-modules.txt)"
+          if ! diff -u expected-modules.txt documented-modules.txt; then
+            echo "::error::The document and the module graph disagree. A line prefixed '-' is a module the build reaches and the document omits; a line prefixed '+' is a module the document claims and the build does not reach."
+            exit 1
+          fi
+          echo "The document lists exactly the modules the build reaches."
+
+      - name: Spot check against the lockfile
+        run: |
+          set -euo pipefail
+          # go.sum is a superset and not an equal set: it carries hashes for
+          # modules that are in the graph without any built package importing
+          # them, and for the go.mod files of modules that supply nothing. So the
+          # check runs in the direction that is sound. Every module in the
+          # document must appear in the lockfile; the reverse is not asserted,
+          # and asserting it would produce a failure with no defect behind it.
+          if [ ! -f go.sum ]; then
+            if [ -s documented-modules.txt ]; then
+              echo "::error::There is no go.sum and the document lists modules. One of the two is wrong."
+              exit 1
+            fi
+            echo "No go.sum and no documented modules. Consistent: this module requires nothing."
+            exit 0
+          fi
+          missing=0
+          while IFS= read -r entry; do
+            [ -n "$entry" ] || continue
+            path=${entry%@*}
+            version=${entry##*@}
+            if ! grep -qF "$path $version" go.sum; then
+              echo "FAIL  ${entry} is in the document and not in go.sum"
+              missing=1
+            fi
+          done < documented-modules.txt
+          if [ "$missing" -ne 0 ]; then
+            echo "::error::The document names a module the lockfile does not pin. The document cannot be trusted to describe what was built."
+            exit 1
+          fi
+          echo "Every documented module is pinned in go.sum. Lockfile lines: $(wc -l < go.sum)."
+
+      - name: Upload the bill of materials
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sbom-cyclonedx
+          path: sbom.cdx.json
+          # Fail rather than warn: an upload step that silently finds no file
+          # would leave a green run with no artifact attached to it, which is the
+          # same invisible breakage the generator guard above is written against.
+          if-no-files-found: error
+          retention-days: 90
