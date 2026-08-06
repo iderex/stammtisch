@@ -2,7 +2,7 @@ name: unicode-guard
 
 on:
   # Every branch and every PR: the guard is a cheap read-only scan and must cover
-  # any future release branch too, not just main (one code line since #954).
+  # any future release branch too, not just main, though there is one code line today.
   push:
     branches: ["**"]
   pull_request:

@@ -17,10 +17,9 @@
 # SHA-pinned with a version comment, checkout runs with persist-credentials:false,
 # permissions are declared read-only at the top level and the write scopes are
 # granted only on the job that needs them. This is a self-audit only - it does
-# not build, test, or touch the publish/release pipeline. Note: publish_results
-# below publishes the OpenSSF supply-chain *score* to the OpenSSF API (the public
-# badge), not any software artifact - it is unrelated to the plugin release
-# pipeline and only works when run from the default branch.
+# not build or test anything. Note: publish_results below publishes the OpenSSF
+# supply-chain *score* to the OpenSSF API (the public badge) and never a software
+# artifact, and it only works when run from the default branch.
 name: Scorecard supply-chain security
 
 on:
