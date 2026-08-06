@@ -24,7 +24,10 @@ document cannot tell you when they have.
     gh api repos/iderex/stammtisch/rulesets/20482339 --jq '{enforcement, bypass: .bypass_actors, types: [.rules[].type]}'
     {"bypass":[],"enforcement":"active","types":["deletion","non_fast_forward","pull_request"]}
 
-Both were run on 2026-08-06 against the commit this document lands on.
+Both were run on 2026-08-06, while this document was being written. Neither
+reads a commit: a ruleset belongs to the repository rather than to any revision
+of it, so there is no version of these outputs that a reader can reproduce from
+the tree. The date is the whole of what pins them.
 
 The second output is the whole distance in one line. This repository's ruleset
 carries no `required_status_checks` entry at all, so every workflow here is
