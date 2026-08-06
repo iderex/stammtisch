@@ -1,0 +1,54 @@
+# The licence header gate. Every tracked source file states the terms it is
+# under, and every tracked file is classified as one that carries the header or
+# one that does not, so a file type nobody thought about is a red check rather
+# than a silent gap.
+#
+# The licence itself is in LICENSE and the appendix there is the instruction
+# this follows: attach the notice to the start of each source file, and give
+# each file at least the copyright line and a pointer to the full notice.
+#
+# The check proves itself on every run. `.github/check-licence-headers.sh`
+# builds faulty fixtures, scans them, and refuses to report on the tree at all
+# unless each fault was caught. There is no proof branch to keep alive and no
+# separate run to go and look at: a green run here is a run in which the scan
+# was shown to be able to fail.
+#
+# Hardened the same way as every other workflow here: read-only permissions at
+# the top level, every action pinned by commit with a version comment, and
+# checkout without persisted credentials.
+name: Licence headers
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# Read-only: the job reads the tree and writes nothing back.
+permissions:
+  contents: read
+
+# A newer run on the same ref supersedes an in-flight one. Nothing here
+# publishes, so cancelling a superseded run is safe.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # The check-run name is "Licence headers" and it is the literal name a
+  # required status check would have to carry. Renaming this job renames the
+  # check run and silently detaches it from any rule that requires it.
+  licence-header:
+    name: Licence headers
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # One invocation. The self-test and the tree scan are the same run of the
+      # same code, so the tree can never be reported clean by a scan that was
+      # not shown to bite first.
+      - name: Prove the scan bites, then scan the tree
+        run: sh .github/check-licence-headers.sh
