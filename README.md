@@ -20,3 +20,10 @@ See [NOTICE.md](NOTICE.md) for the intended-use notice.
 
 See [LICENSE](LICENSE) for the terms, the GNU Affero General Public
 License version 3.
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for how a change gets in, and which of
+the rules there anything actually refuses.
+
+See [GOVERNANCE.md](GOVERNANCE.md) for who decides and how a disagreement is
+resolved, and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) for what is expected of
+people here and where to report behaviour that is not.
