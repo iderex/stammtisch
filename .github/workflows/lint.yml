@@ -1,0 +1,84 @@
+# The formatting and lint gate. Formatting arguments are a tax paid per pull
+# request forever; a formatter settles them once and a linter catches the class
+# of mistake that compiles.
+#
+# Two steps, because they answer different questions and a reader should be able
+# to see which one refused. The format step prints the diff rather than only
+# naming the file, so the fix is in the log instead of in a second local run.
+# The lint step runs the set declared in .golangci.yml at the repository root,
+# so the same set runs on a contributor's machine.
+#
+# `go vet` is not here. The build gate in build.yml runs it, and .golangci.yml
+# says the same thing where a reader configuring linters will be looking.
+#
+# Hardened the same way as every other workflow here: read-only permissions at
+# the top level, every action pinned by commit with a version comment, and
+# checkout without persisted credentials.
+name: Lint
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# Read-only: the job reads the tree and writes nothing back. In particular it
+# never reformats and pushes; the contributor runs the formatter.
+permissions:
+  contents: read
+
+# A newer run on the same ref supersedes an in-flight one. Nothing here
+# publishes, so cancelling a superseded run is safe.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # The check-run name is "Lint and format" and it is the literal name a
+  # required status check would have to carry. Renaming this job renames the
+  # check run and silently detaches it from any rule that requires it.
+  lint:
+    name: Lint and format
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          # The floor comes from go.mod rather than from a number written here,
+          # so the toolchain the gate uses cannot drift from the one the module
+          # declares.
+          go-version-file: go.mod
+
+      - name: Check formatting
+        run: |
+          set -euo pipefail
+          # -l names the files that differ from the formatter's output and -d
+          # prints the diff, so the log carries the fix and not only the
+          # complaint. Both the output and the exit code are read, because they
+          # say different things: a difference produces output and exit 1, and a
+          # gofmt that cannot run produces no diff and a non-zero exit as well.
+          # Deciding on the output alone would read the second as a clean tree.
+          rc=0
+          out=$(gofmt -l -d .) || rc=$?
+          if [ -n "$out" ]; then
+            echo "$out"
+            echo "::error::Formatting differs from gofmt output. Run 'gofmt -w .' and commit the result."
+            exit 1
+          fi
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::gofmt exited $rc and produced no diff - failing closed instead of assuming the tree is formatted."
+            exit 1
+          fi
+          echo "Every file matches gofmt output."
+
+      - name: Lint
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        with:
+          # Pinned rather than floating: a linter that updates on its own turns
+          # an unrelated pull request red for a rule nobody chose.
+          version: v2.12.2

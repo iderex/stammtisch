@@ -12,5 +12,7 @@ import (
 )
 
 func main() {
-	fmt.Fprintln(os.Stdout, "stammtisch: nothing is implemented yet")
+	if _, err := fmt.Fprintln(os.Stdout, "stammtisch: nothing is implemented yet"); err != nil {
+		os.Exit(1)
+	}
 }
