@@ -27,3 +27,6 @@ the rules there anything actually refuses.
 See [GOVERNANCE.md](GOVERNANCE.md) for who decides and how a disagreement is
 resolved, and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) for what is expected of
 people here and where to report behaviour that is not.
+
+See [SECURITY.md](SECURITY.md) before reporting a vulnerability. It goes
+through a private route rather than a public issue.
