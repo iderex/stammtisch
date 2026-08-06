@@ -91,7 +91,14 @@ jobs:
       # test that ran.
       - name: Run the unit suite and count what it ran
         run: |
-          set -uo pipefail
+          set -u
+          set -o pipefail
+          # The step shell is started with -e. That is turned off here on
+          # purpose: a red suite has to reach the count and the exit code below
+          # rather than aborting at the line that produced it, and `grep -c`
+          # exits non-zero on a count of zero, which is the ordinary case for
+          # the failed and skipped tallies.
+          set +e
           go test -count=1 -v ./... 2>&1 | tee test-output.txt
           status=${PIPESTATUS[0]}
           passed=$(grep -cE '^[[:space:]]*--- PASS: ' test-output.txt)
