@@ -1,0 +1,57 @@
+# The build gate. A change that does not compile is refused before a person
+# reads it, on every pull request and on every push to the default branch.
+#
+# Go has no warning level. The compiler refuses rather than warns, so an unused
+# import or an unused variable is already a red build here. What plays the part
+# of a warning elsewhere is a `go vet` diagnostic: correct-looking code the
+# toolchain knows is probably wrong. This job runs vet beside the build so that
+# class cannot accumulate, and it is cheapest to hold at zero from the first
+# commit that has any code in it at all.
+#
+# Hardened the same way as every other workflow here: read-only permissions at
+# the top level, every action pinned by commit with a version comment, and
+# checkout without persisted credentials.
+name: Build
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# Read-only: the job compiles the tree and writes nothing back.
+permissions:
+  contents: read
+
+# A newer run on the same ref supersedes an in-flight one. Nothing here
+# publishes, so cancelling a superseded run is safe.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # The check-run name is "Build" and it is the literal name a required status
+  # check would have to carry. Renaming this job renames the check run and
+  # silently detaches it from any rule that requires it.
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          # The floor comes from go.mod rather than from a number written here,
+          # so the toolchain the gate uses cannot drift from the one the module
+          # declares.
+          go-version-file: go.mod
+
+      - name: Build every package
+        run: go build ./...
+
+      - name: Vet every package
+        run: go vet ./...
