@@ -1,0 +1,194 @@
+# The deterministic half of what a pull request is supposed to carry.
+#
+# CONTRIBUTING.md asks a change to reference an issue, and to stay inside the
+# scope that issue declares. Stated in a document, both of those are
+# preferences. This job turns the mechanical half into something that refuses.
+#
+# WHAT IT DOES NOT REACH, and this list is the point of the job rather than a
+# caveat on it:
+#
+#   - Whether the reasoning in a body is any good. That is a judgement about
+#     meaning and no reading of a tree makes it.
+#   - Whether a commit message says what changed and what failure it prevents.
+#     It reads messages only to find issue references.
+#   - Whether the work in a change actually belongs to the issue it names, as
+#     opposed to merely landing in the same paths. A second unrelated topic
+#     inside one declared scope passes here and a person has to catch it.
+#   - Whether a body carries the command behind a number it quotes.
+#   - Anything at all about a pull request that declares no scope. Where no
+#     referenced issue carries a `Scope:` line the path comparison is not made,
+#     and the log says so in those words rather than printing a tick.
+#
+# A branch that reaches outside its issue's scope on purpose, which is what a
+# proof branch does, is refused here. That is the correct answer for a branch
+# whose own body says it is not for merging.
+#
+# Hardened the same way as every other workflow here: read-only permissions at
+# the top level, every action pinned by commit with a version comment, checkout
+# without persisted credentials, and nothing from the event interpolated into a
+# shell.
+name: PR hygiene
+
+on:
+  pull_request:
+    # `edited` is in the list because the body is one of the two places a
+    # reference can live, so editing the body has to re-run the judgement.
+    types: [opened, synchronize, reopened, edited]
+
+# Read-only. `issues: read` is what lets the job fetch the body of a referenced
+# issue to look for its `Scope:` line.
+permissions:
+  contents: read
+  issues: read
+
+concurrency:
+  group: pr-hygiene-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  # The check-run name is "Deterministic PR-hygiene checks" and it is the
+  # literal name a required status check would have to carry. Renaming this job
+  # renames the check run and silently detaches it from any rule that requires
+  # it. It is deliberately the same name the reference gate uses, which
+  # docs/reference-gate-parity.md records.
+  hygiene:
+    name: Deterministic PR-hygiene checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Full history so the merge base is computable; no push, so drop the
+          # persisted token.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Read the issue references and compare the changed paths
+        # Everything from the event arrives through env and is never
+        # interpolated into the script, so a crafted branch name or body can
+        # never be evaluated as shell.
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          # The merge base rather than the base branch tip. `base.sha` is the
+          # tip as it stood when the event fired, and comparing against it
+          # directly attributes every commit that landed on the base since then
+          # to this pull request.
+          if ! merge_base=$(git merge-base "$BASE_SHA" "$HEAD_SHA"); then
+            echo "::error::Could not compute the merge base of ${BASE_SHA} and ${HEAD_SHA}. Failing closed: nothing was compared."
+            exit 1
+          fi
+          echo "merge base: ${merge_base}"
+
+          # ---- references -------------------------------------------------
+          # Both places a reference is allowed to live: the commit messages and
+          # the pull request body. `grep` exits 1 on no match, which under
+          # `pipefail` would abort the script before it could say why, so the
+          # empty case is handled below on the file being empty instead.
+          {
+            git log --format='%B' "${merge_base}..${HEAD_SHA}"
+            printf '%s\n' "$PR_BODY"
+          } | grep -oE '#[0-9]+' | tr -d '#' | sort -un > refs.txt || true
+
+          if [ ! -s refs.txt ]; then
+            echo "::error::No issue reference anywhere in this change. Name the issue it belongs to, as '#<number>' in a commit message or in the pull request body. CONTRIBUTING.md, 'Getting a change in'."
+            exit 1
+          fi
+
+          # ---- resolve ----------------------------------------------------
+          # Resolvable means the number is an issue in THIS repository. A
+          # number that resolves to a pull request is reported and does not
+          # count, because a pull request carries no `Scope:` line and letting
+          # one satisfy the requirement would open a hole in the check below.
+          : > issues.txt
+          while read -r n; do
+            [ -n "$n" ] || continue
+            if body=$(gh api "repos/${REPO}/issues/${n}" --jq '{pr: (.pull_request != null), body: (.body // "")}' 2> api-err.txt); then
+              if [ "$(printf '%s' "$body" | jq -r .pr)" = "true" ]; then
+                echo "note  #${n} is a pull request, not an issue"
+                continue
+              fi
+              echo "ok    #${n} resolves to an issue"
+              printf '%s\n' "$n" >> issues.txt
+              printf '%s' "$body" | jq -r .body | tr -d '\r' > "issue-${n}.body"
+            elif grep -q 'HTTP 404' api-err.txt; then
+              echo "note  #${n} does not resolve in ${REPO}"
+            else
+              cat api-err.txt
+              echo "::error::Could not read #${n} and the failure was not a 404. Failing closed rather than reading an unreachable tracker as an absent issue."
+              exit 1
+            fi
+          done < refs.txt
+
+          if [ ! -s issues.txt ]; then
+            echo "::error::Every reference in this change failed to resolve to an issue in ${REPO}. A number that names nothing is not a reference."
+            exit 1
+          fi
+
+          # ---- scopes -----------------------------------------------------
+          # `Scope:` at column zero, and the whole of the rest of the line is
+          # one path. It is NOT split on whitespace: a scope naming a path with
+          # a space in it would otherwise become two scopes that match nothing,
+          # and the resulting refusal would be of valid work. A comma is the one
+          # separator, so that an issue spanning two directories can say so.
+          : > scopes.txt
+          while read -r n; do
+            [ -n "$n" ] || continue
+            sed -n 's/^Scope:[[:space:]]*//p' "issue-${n}.body" \
+              | tr ',' '\n' \
+              | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' \
+              | awk 'NF' \
+              | while read -r s; do echo "#${n} ${s}"; done >> scopes.txt
+          done < issues.txt
+
+          git diff --name-only "${merge_base}" "${HEAD_SHA}" | awk 'NF' | sort -u > changed.txt
+          echo "changed paths: $(wc -l < changed.txt)"
+          sed 's/^/  /' changed.txt
+
+          if [ ! -s scopes.txt ]; then
+            echo "No referenced issue declares a Scope: line."
+            echo "THE PATH COMPARISON WAS NOT MADE. This check passed without comparing anything, and that is a gap in the gate rather than a clean result."
+            exit 0
+          fi
+
+          echo "declared scopes:"
+          sed 's/^/  /' scopes.txt
+
+          # ---- compare ----------------------------------------------------
+          # A path is inside a scope when the scope is `.`, when it equals the
+          # path, or when it is a directory prefix of it. A bare prefix match is
+          # deliberately not used: `docs` must not admit `docsy/x`.
+          outside=0
+          while read -r path; do
+            hit=""
+            while read -r issue scope; do
+              case "$scope" in
+                .|./) hit="$issue"; break ;;
+              esac
+              scope=${scope#./}
+              scope_dir=${scope%/}
+              if [ "$path" = "$scope_dir" ] || case "$path" in "${scope_dir}/"*) true ;; *) false ;; esac; then
+                hit="$issue"
+                break
+              fi
+            done < scopes.txt
+            if [ -n "$hit" ]; then
+              echo "in    ${path}  (${hit})"
+            else
+              echo "OUT   ${path}"
+              outside=1
+            fi
+          done < changed.txt
+
+          if [ "$outside" -ne 0 ]; then
+            echo "::error::This change touches paths outside every scope its issues declare. Either the change belongs to a different issue, or the issue's Scope: line is wrong and should be corrected there first."
+            exit 1
+          fi
+          echo "Every changed path falls inside a declared scope."
