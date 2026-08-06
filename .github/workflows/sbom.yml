@@ -154,7 +154,11 @@ jobs:
             [ -n "$entry" ] || continue
             path=${entry%@*}
             version=${entry##*@}
-            if ! grep -qF "$path $version" go.sum; then
+            # Field comparison rather than a substring search. `grep -F "p v1.1.1"`
+            # also matches the go.sum line for `p v1.1.10`, which would accept a
+            # version the lockfile does not pin, and this step exists to refuse
+            # exactly that.
+            if ! awk -v p="$path" -v v="$version" '$1 == p && ($2 == v || $2 == v "/go.mod") { found = 1 } END { exit !found }' go.sum; then
               echo "FAIL  ${entry} is in the document and not in go.sum"
               missing=1
             fi
