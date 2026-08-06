@@ -111,10 +111,24 @@ jobs:
           while read -r n; do
             [ -n "$n" ] || continue
             if body=$(gh api "repos/${REPO}/issues/${n}" --jq '{pr: (.pull_request != null), body: (.body // "")}' 2> api-err.txt); then
-              if [ "$(printf '%s' "$body" | jq -r .pr)" = "true" ]; then
-                echo "note  #${n} is a pull request, not an issue"
-                continue
+              # Read the answer into a variable and then judge it, rather than
+              # comparing a command substitution inside `[ ]`. A substitution
+              # that fails there contributes an empty string and the comparison
+              # simply comes out false, so a broken read would be indistinguishable
+              # from "this is an issue" and the check would fail open.
+              if ! is_pr=$(printf '%s' "$body" | jq -r .pr); then
+                echo "::error::Could not read whether #${n} is an issue or a pull request. Failing closed."
+                exit 1
               fi
+              case "$is_pr" in
+                true)
+                  echo "note  #${n} is a pull request, not an issue"
+                  continue ;;
+                false) ;;
+                *)
+                  echo "::error::Reading #${n} gave '${is_pr}' where true or false was expected. Failing closed."
+                  exit 1 ;;
+              esac
               echo "ok    #${n} resolves to an issue"
               printf '%s\n' "$n" >> issues.txt
               printf '%s' "$body" | jq -r .body | tr -d '\r' > "issue-${n}.body"
