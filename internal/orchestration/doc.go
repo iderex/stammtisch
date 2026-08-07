@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026  iderex
+
 // Package orchestration holds signalling, sessions, permissions, presence and
 // the state machines that move a member between channels.
 //
