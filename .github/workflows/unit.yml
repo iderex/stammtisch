@@ -1,0 +1,115 @@
+# The unit suite, on a runner that has nothing.
+#
+# Headless testability is a birth requirement on this board, and a requirement
+# with no check is a preference. The moment one test needs a sound device, a
+# display or a raised privilege, the suite stops running on a clean runner and
+# the discipline unwinds quietly, one test at a time, with nobody noticing until
+# the whole suite only runs on the machine it was written on.
+#
+# So the constraint is enforced by where the suite runs rather than by a rule in
+# a document. This job runs the whole suite on a stock runner with no display
+# server, no audio device and no elevation, and it asserts those absences before
+# it runs anything rather than assuming them. A test that needs any of the three
+# fails here, which is the point.
+#
+# It also counts what it ran. A suite that silently executed nothing exits zero
+# exactly like a suite that ran and passed, and the count is the only thing that
+# tells those two apart.
+#
+# Hardened the same way as every other workflow here: read-only permissions at
+# the top level, every action pinned by commit with a version comment, and
+# checkout without persisted credentials.
+name: Unit
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# Read-only: the job runs tests and writes nothing back.
+permissions:
+  contents: read
+
+# A newer run on the same ref supersedes an in-flight one. Nothing here
+# publishes, so cancelling a superseded run is safe.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # The check-run name is "Unit" and it is the literal name a required status
+  # check would have to carry. Renaming this job renames the check run and
+  # silently detaches it from any rule that requires it. Issue #25 is where
+  # that rule is asked for.
+  unit:
+    name: Unit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          # The floor comes from go.mod rather than from a number written here,
+          # so the toolchain the gate uses cannot drift from the one the module
+          # declares.
+          go-version-file: go.mod
+
+      # This step is why the job is evidence rather than a hope. It prints what
+      # it found before it judges it, so a reader can see the environment the
+      # suite then ran in rather than trusting that it was bare.
+      #
+      # /dev/dri is reported and not refused, and the difference is deliberate.
+      # The stock runner carries a render node: the first run of this job
+      # refused it and went red on a runner that had no display server at all.
+      # A render node is not a display server, nothing can draw to it without
+      # one, and a check that refuses the runner this board has chosen is a
+      # check nobody can satisfy.
+      - name: Prove the runner has no display, no audio device and no elevation
+        run: |
+          set -uo pipefail
+          echo "uid=$(id -u) user=$(id -un)"
+          echo "DISPLAY='${DISPLAY:-}'"
+          echo "WAYLAND_DISPLAY='${WAYLAND_DISPLAY:-}'"
+          ls -d /dev/snd 2>/dev/null || echo "/dev/snd: absent"
+          ls -d /dev/dri 2>/dev/null || echo "/dev/dri: absent (reported, not refused)"
+          fail=0
+          note() { echo "REFUSED: $1"; fail=1; }
+          [ -z "${DISPLAY:-}" ] || note "DISPLAY is set, so a test needing a display would pass here and fail on a clean runner"
+          [ -z "${WAYLAND_DISPLAY:-}" ] || note "WAYLAND_DISPLAY is set, same reason"
+          [ ! -e /dev/snd ] || note "an audio device is present, so a test needing one would pass here and fail on a clean runner"
+          [ "$(id -u)" != "0" ] || note "the job is running as uid 0, and the suite has to pass unprivileged"
+          exit "$fail"
+
+      # The count is taken from the verbose log rather than from a structured
+      # report, so the same three commands can be run on a workstation and give
+      # the same three numbers. Subtests are counted, because a subtest is a
+      # test that ran.
+      - name: Run the unit suite and count what it ran
+        run: |
+          set -u
+          set -o pipefail
+          # The step shell is started with -e. That is turned off here on
+          # purpose: a red suite has to reach the count and the exit code below
+          # rather than aborting at the line that produced it, and `grep -c`
+          # exits non-zero on a count of zero, which is the ordinary case for
+          # the failed and skipped tallies.
+          set +e
+          go test -count=1 -v ./... 2>&1 | tee test-output.txt
+          status=${PIPESTATUS[0]}
+          passed=$(grep -cE '^[[:space:]]*--- PASS: ' test-output.txt)
+          failed=$(grep -cE '^[[:space:]]*--- FAIL: ' test-output.txt)
+          skipped=$(grep -cE '^[[:space:]]*--- SKIP: ' test-output.txt)
+          total=$((passed + failed + skipped))
+          echo "tests executed: $total (passed $passed, failed $failed, skipped $skipped)"
+          if [ "$status" -ne 0 ]; then
+            exit "$status"
+          fi
+          if [ "$total" -eq 0 ]; then
+            echo "REFUSED: the suite reported no tests at all, and a run that executed nothing is not a run that passed"
+            exit 1
+          fi
