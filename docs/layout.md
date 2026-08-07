@@ -38,9 +38,9 @@ this tree yet.
 
 `docs/` holds the decision records and the operator documentation.
 
-`.github/` holds the workflows. It carries no README, and that is the one
-departure from the rule above. What each workflow refuses is in its own file and
-`CONTRIBUTING.md` sends a reader there; a README in that directory would be a
+`.github/` holds the workflows and the scripts they call. Its README says what
+belongs there and deliberately lists none of the checks: what each one refuses
+is written at the top of its own workflow file, and a list here would be a
 second place for the same answer to drift from.
 
 ## What the artefact is built from

@@ -1,0 +1,5 @@
+# `go build ./...` in the repository root writes the server binary beside the
+# source, so the documented build command leaves a file that `git add -A` then
+# takes. That has now happened twice on this board.
+/stammtisch
+/stammtisch.exe

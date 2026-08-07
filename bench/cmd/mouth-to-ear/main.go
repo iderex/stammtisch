@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026  iderex
+
 // Command mouth-to-ear runs the mouth-to-ear measurement rig and writes a
 // report.
 //
@@ -118,13 +121,24 @@ func run(args []string, stdout, stderr *os.File) error {
 		}
 	}
 
-	fmt.Fprintf(stderr, "pass 1: %d/%d chirps detected, %d missed, p50 %.3f ms, p95 %.3f ms, p99 %.3f ms\n",
-		first.SampleCount, first.TrialsAttempted, first.Misses, first.P50Ms, first.P95Ms, first.P99Ms)
+	// The summary goes to stderr while the report goes to stdout, so a run
+	// whose report is being piped still says on the terminal what it found.
+	// A write to stderr that fails is returned rather than dropped: the case
+	// it covers is a closed or full stderr, where a command that carried on
+	// silently would exit zero having reported nothing.
+	if _, err := fmt.Fprintf(stderr, "pass 1: %d/%d chirps detected, %d missed, p50 %.3f ms, p95 %.3f ms, p99 %.3f ms\n",
+		first.SampleCount, first.TrialsAttempted, first.Misses, first.P50Ms, first.P95Ms, first.P99Ms); err != nil {
+		return err
+	}
 	if rep.Second != nil {
-		fmt.Fprintf(stderr, "pass 2: %d/%d chirps detected, %d missed, p50 %.3f ms, p95 %.3f ms, p99 %.3f ms\n",
+		if _, err := fmt.Fprintf(stderr, "pass 2: %d/%d chirps detected, %d missed, p50 %.3f ms, p95 %.3f ms, p99 %.3f ms\n",
 			rep.Second.SampleCount, rep.Second.TrialsAttempted, rep.Second.Misses,
-			rep.Second.P50Ms, rep.Second.P95Ms, rep.Second.P99Ms)
-		fmt.Fprintln(stderr, rep.Repeatability.Statement)
+			rep.Second.P50Ms, rep.Second.P95Ms, rep.Second.P99Ms); err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintln(stderr, rep.Repeatability.Statement); err != nil {
+			return err
+		}
 	}
 
 	// A pass that detected nothing has to fail rather than report a clean
