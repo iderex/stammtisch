@@ -3,8 +3,16 @@
 This repository refuses some things outright and asks for others without any way
 of refusing them. The difference matters more than the rules do, so every rule
 below says which of the two it is. Where nothing refuses a violation, the rule is
-marked `NOT ENFORCED` and carries the issue that owes the mechanism. A rule with
-that mark is still a rule. It is just one that a person has to catch.
+marked `NOT ENFORCED` and carries the issue that owes the mechanism, or says that
+no mechanism is owed because there is nothing in a tree for a check to read. A
+rule with that mark is still a rule. It is just one that a person has to catch.
+
+A rule can be half of each. When a mechanism lands it
+usually covers one clause of a sentence and not the rest, so the mark splits
+rather than disappearing: the enforced half names the check, and the half that is
+still nobody's mechanism stays written down as such. A paragraph that lost its
+mark entirely when a check landed would be claiming cover the check does not
+give.
 
 ## Getting a change in
 
@@ -14,8 +22,19 @@ Every change starts as an issue and lands as a pull request.
     cd stammtisch
     git switch -c topic/short-name
 
-`NOT ENFORCED`, issue #77. Nothing today reads a pull request for an issue
-reference or refuses one that names none.
+REFUSED BY A CHECK for the second half of that sentence. The
+`Deterministic PR-hygiene checks` job in `.github/workflows/pr-hygiene.yml` reads
+the commit messages and the body for `#<number>` references, resolves each one
+against this repository, and refuses a change where none of them resolves to an
+issue. A number that resolves to a pull request is reported and does not count.
+The job fails closed: a reference it cannot read for any reason other than a 404
+reds the check rather than passing as absent.
+
+`NOT ENFORCED` for the first half, and no issue owes a mechanism for it. Nothing
+reads whether the issue says what is wrong, what the evidence is and what done
+means, and nothing can tell an issue opened before the work from one opened to
+justify a branch that already exists. Both are judgements about meaning, and the
+review is where a bad one is caught.
 
 Direct pushes to `main` are refused, by an active ruleset with no bypass actors.
 That one you can read for yourself:
@@ -68,10 +87,11 @@ on your machine. Some of them have local equivalents you can run yourself: the
 sign-off loop above, the Unicode scan below, and the licence header scan, which
 is the same script the workflow runs. The rest run on GitHub or not at all.
 
-`NOT ENFORCED`, issue #25. None of the five is a required status check, so a red
-check does not by itself block a merge. The `types` list in the ruleset output
-above is where you can see that for yourself: it carries no
-`required_status_checks` entry. Wait for the checks and merge on green anyway.
+`NOT ENFORCED`, issue #25. Not one of them is a required status check, whatever
+their number is on the day you read this, so a red check does not by itself block
+a merge. The `types` list in the ruleset output above is where you can see that
+for yourself: it carries no `required_status_checks` entry. Wait for the checks
+and merge on green anyway.
 
 ## Unicode
 
@@ -139,10 +159,26 @@ Before you push, look at what you actually touched:
 
     git diff --name-only origin/main...HEAD
 
-`NOT ENFORCED`, issue #77. Nothing reads a pull request body, compares changed
-paths against a declared scope, or judges whether a commit message says anything.
-The check that would do the mechanical half of this is owed there, and it will
-never do the other half, which is whether the reasoning is any good.
+REFUSED BY A CHECK for the paths. The `Deterministic PR-hygiene checks` job
+reads the body, takes the `Scope:` line out of every issue the change names, and
+refuses a change touching a path outside every one of them. `Scope:` is at
+column zero and the rest of the line is one path; a comma separates two.
+
+`NOT ENFORCED` for three halves of it, and they are different from each other.
+
+Where no referenced issue carries a `Scope:` line, the comparison is not made at
+all. The job says so in the log in those words and passes, so a change that
+declares no scope anywhere gets no path check rather than a refusal. That is the
+default and it fails open.
+
+Whether the work belongs to the issue it names, as opposed to merely landing in
+the same paths, is not read. A second unrelated topic inside one declared scope
+passes.
+
+Whether a commit message or a body says anything is not read. The job takes one
+thing out of a message, the issue reference, and judges nothing else: not whether
+the message says what changed, not whether the body says how you know it works,
+and not whether a number in it carries the command that produced it.
 
 ## Signatures
 
