@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026  iderex
+
 // Package bench holds the mouth-to-ear measurement rig.
 //
 // It measures one-way delay for a system it treats as a black box: a signal
