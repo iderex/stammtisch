@@ -35,12 +35,28 @@ prefix_for() {
 }
 
 # source: carries the header. text: does not. Anything else is a refusal.
+#
+# The extension patterns judge a whole path and need nothing done to them. The
+# bare names are different: scan() is given what `git ls-files` prints, so
+# `bench/.gitignore` arrives with its directory attached and a pattern written
+# as a file name matches only in the repository root. They are matched against
+# the last path component for that reason.
+#
+# That widens them to the same file under any directory and to nothing else.
+# The anchoring is the point and the proof block below spends most of its
+# faulty fixtures on it: `*.gitignore` would have been one character shorter to
+# write and would also accept `backup.gitignore`, which is a file this list
+# never named.
 classify() {
 	case "$1" in
 	*.go | *.sh) printf 'source' ;;
 	*.md | *.yml | *.yaml | *.json | *.mod | *.sum | *.txt) printf 'text' ;;
-	LICENSE | NOTICE | DCO | .gitattributes | .gitignore) printf 'text' ;;
-	*) return 1 ;;
+	*)
+		case "${1##*/}" in
+		LICENSE | NOTICE | DCO | .gitattributes | .gitignore) printf 'text' ;;
+		*) return 1 ;;
+		esac
+		;;
 	esac
 }
 
@@ -87,9 +103,28 @@ scan() {
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
+mkdir "$work/sub" "$work/notes"
+
+# The fixtures are scanned from inside the temporary directory rather than by
+# absolute path, so each one reaches scan() in the shape `git ls-files` prints:
+# some bare, some under a directory. A classifier that only ever sees an
+# absolute path cannot be shown to mishandle a relative one, and mishandling a
+# relative one is what #119 was.
+proof_scan() (
+	cd "$work" && scan "$@"
+)
 
 printf '%s\n' "// $SPDX" "// $COPY" '' 'package fixture' >"$work/good.go"
 printf '%s\n' '#!/bin/sh' "# $SPDX" "# $COPY" >"$work/good.sh"
+# Named files, at the root and under a directory. Both directions are load
+# bearing: a repair written as `*/.gitignore` fixes the subdirectory case and
+# drops the root one, and nothing else in this block would notice.
+printf '%s\n' '*.json' >"$work/.gitignore"
+printf '%s\n' '*.json' >"$work/sub/.gitignore"
+printf '%s\n' '* text=auto' >"$work/sub/.gitattributes"
+printf '%s\n' 'a licence' >"$work/sub/LICENSE"
+printf '%s\n' 'a notice' >"$work/sub/NOTICE"
+printf '%s\n' 'a certificate' >"$work/sub/DCO"
 
 printf '%s\n' 'package fixture' >"$work/absent.go"
 # The one-character-class mistake: the identifier of the licence without its
@@ -98,9 +133,17 @@ printf '%s\n' '// SPDX-License-Identifier: AGPL-3.0' "// $COPY" >"$work/nearmiss
 printf '%s\n' "// $COPY" "// $SPDX" >"$work/swapped.go"
 printf '%s\n' '#!/bin/sh' "# $COPY" >"$work/shebang-then-nothing.sh"
 printf '%s\n' 'fn main() {}' >"$work/unknown.rs"
+# An unnamed extension has to stay refused under a directory too, or the
+# classifier stops covering the tree exactly where the tree grows.
+printf '%s\n' 'fn main() {}' >"$work/sub/unknown.rs"
+# The two mistakes a basename match invites, both one character from correct.
+# `*.gitignore` accepts the first; `LICENSE*` accepts the second. Neither name
+# is in the list, and a classifier that takes them has stopped asking.
+printf '%s\n' '*.json' >"$work/sub/backup.gitignore"
+printf '%s\n' 'an exception' >"$work/notes/LICENSE-EXCEPTIONS"
 
-clean_fixtures='good.go good.sh'
-faulty_fixtures='absent.go nearmiss.go swapped.go shebang-then-nothing.sh unknown.rs'
+clean_fixtures='good.go good.sh .gitignore sub/.gitignore sub/.gitattributes sub/LICENSE sub/NOTICE sub/DCO'
+faulty_fixtures='absent.go nearmiss.go swapped.go shebang-then-nothing.sh unknown.rs sub/unknown.rs sub/backup.gitignore notes/LICENSE-EXCEPTIONS'
 
 proof_failures=0
 clean_count=0
@@ -109,7 +152,7 @@ faulty_count=0
 # Refuses nothing it should not.
 for good in $clean_fixtures; do
 	clean_count=$((clean_count + 1))
-	if out=$(scan "$work/$good"); then
+	if out=$(proof_scan "$good"); then
 		[ -z "$out" ] || {
 			printf 'PROOF FAILED: %s produced output: %s\n' "$good" "$out"
 			proof_failures=$((proof_failures + 1))
@@ -123,7 +166,7 @@ done
 # Refuses every fault, and names the file it refused.
 for bad in $faulty_fixtures; do
 	faulty_count=$((faulty_count + 1))
-	if out=$(scan "$work/$bad"); then
+	if out=$(proof_scan "$bad"); then
 		printf 'PROOF FAILED: %s passed and it should not\n' "$bad"
 		proof_failures=$((proof_failures + 1))
 	else

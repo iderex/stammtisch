@@ -1,0 +1,2 @@
+# Reports a run leaves behind. The rig writes them; the tree does not keep them.
+*.json
