@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026  iderex
+
 // Package botapi holds the bot API surface, which is a public contract third
 // parties write against.
 //
