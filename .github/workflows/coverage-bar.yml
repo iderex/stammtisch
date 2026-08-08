@@ -17,7 +17,7 @@
 # with the same two commands this job runs, which is 305 of 306 statements. The
 # whole-tree figure at that commit was 86.5 percent and is reported rather than
 # gated. internal/signalling and internal/auth each measured 100.0 percent on the
-# change that added them, by the same route:
+# change that added them, by the same route, and so did internal/transport:
 #
 #     go test ./... -covermode=atomic -coverprofile=cover.out
 #     go tool cover -func=cover.out | grep 'internal/signalling'
@@ -46,6 +46,13 @@
 # way rather than through a guessed package name written here in advance,
 # because a guessed name nobody happens to use is a rule that never fires and
 # says nothing.
+#
+# internal/transport is on the surface for a reason the five names do not spell
+# out. It is not one of them; it is what stands in front of the fourth. An
+# unauthenticated peer reaches the WebSocket handshake before it reaches the
+# decoder, and a package deciding whether a stranger gets a connection at all
+# belongs where the decoder it feeds already is. It arrived with the rest of #30
+# and measured 100.0 percent.
 #
 # It fails closed. An unreadable, empty or unparseable profile is a refusal, and
 # the step proves that before it measures anything: it runs the same two
@@ -117,6 +124,7 @@ jobs:
           github.com/iderex/stammtisch/internal/auth
           github.com/iderex/stammtisch/internal/orchestration
           github.com/iderex/stammtisch/internal/signalling
+          github.com/iderex/stammtisch/internal/transport
           LIST
 
           cat > "$work/outside" <<'LIST'
