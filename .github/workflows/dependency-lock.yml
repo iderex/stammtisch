@@ -1,0 +1,96 @@
+# The dependency lock gate.
+#
+# `dependency-review.yml` reads what a change did to the graph and refuses a
+# known vulnerability in what was added. It never opens the lockfile, so it
+# cannot tell a reviewer that the build in front of them resolved the versions
+# the tree declares. A graph can drift, or be pushed, underneath a manifest
+# nobody touched, and every check on this board would stay green.
+#
+# This job is the other direction. It runs four legs and the first failure stops
+# the job:
+#
+#   the lock check       every module go.mod requires is pinned in go.sum
+#   go mod tidy -diff    neither file would change if the graph were resolved
+#   go mod verify        what is in the module cache matches those pins
+#   -mod=readonly build  a build that would have to edit go.mod is refused
+#
+# Only the first leg is proven here. It builds faulty fixture modules in a
+# temporary directory and refuses to report on the tree unless each one was
+# caught, so a green run is a run in which the check was shown able to say no.
+# The other three are the toolchain's own refusals, this repository proves
+# nothing about them, and issue #18 is where that is written down.
+#
+# Hardened the same way as every other workflow here: read-only permissions at
+# the top level, every action pinned by commit with a version comment, and
+# checkout without persisted credentials.
+name: Dependency lock
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# Read-only: the job reads the manifest and the lockfile and writes nothing
+# back. In particular it never runs `go mod tidy` without `-diff`, because a
+# gate that repairs what it was asked to judge reports a clean tree it made
+# clean itself.
+permissions:
+  contents: read
+
+# A newer run on the same ref supersedes an in-flight one. Nothing here
+# publishes, so cancelling a superseded run is safe.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # The check-run name is "Dependency lock" and it is the literal name a
+  # required status check would have to carry. Renaming this job renames the
+  # check run and silently detaches it from any rule that requires it. Issue #25
+  # is where that rule is asked for.
+  dependency-lock:
+    name: Dependency lock
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          # The floor comes from go.mod rather than from a number written here,
+          # so the toolchain the gate uses cannot drift from the one the module
+          # declares.
+          go-version-file: go.mod
+          # The cache keys on go.sum. There is no go.sum in this tree, and a
+          # cache step that cannot find its key warns and carries on, which is
+          # noise on every run rather than a signal. Nothing here is slow enough
+          # to need it.
+          cache: false
+
+      - name: Every required module is pinned in the lockfile
+        run: sh .github/check-dependency-lock.sh
+
+      # `-diff` is the whole reason this leg is safe to run in a gate. Plain
+      # `go mod tidy` rewrites the two files and exits zero, so a job that ran
+      # it would report a tidy tree it had just tidied. With the flag the
+      # command writes nothing and exits non-zero when it would have.
+      - name: The manifest and the lockfile are what a resolve would produce
+        run: go mod tidy -diff
+
+      # This is the tamper leg rather than the drift leg. It rehashes what is in
+      # the module cache and compares against the pins, so a dependency whose
+      # contents changed under an unchanged version reds here and nowhere else.
+      - name: What was downloaded matches what is pinned
+        run: go mod verify
+
+      # `-mod=readonly` is the toolchain's default and is written out anyway.
+      # The default is a thing that can be changed by a GOFLAGS export in a
+      # later step or in a runner image, and a gate that relies on a default it
+      # does not state is a gate that can be turned off from outside the file
+      # that declares it.
+      - name: A build that would edit the manifest is refused
+        run: go build -mod=readonly ./...
