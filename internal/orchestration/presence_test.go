@@ -553,3 +553,172 @@ func describe(order []orchestration.PresenceReport) string {
 	}
 	return out
 }
+
+// TestEveryPresenceRefusalIsReached covers the constructors' and the hub's
+// refusals, which the fan-out tests above walk straight past.
+//
+// A refusal nothing executes is a refusal nobody has read the message of, and
+// this surface has eight of them. #93 is the issue that asks for the layer to
+// hold no unexecuted path; this is the presence half of that, and it was the
+// half the fan-out change left behind.
+func TestEveryPresenceRefusalIsReached(t *testing.T) {
+	g := seesEverything()
+
+	if _, err := orchestration.NewPresenceHub(orchestration.ID{}, g); !errors.Is(err, orchestration.ErrInvariant) {
+		t.Fatalf("a hub with no space returned %v, want ErrInvariant", err)
+	}
+	if _, err := orchestration.NewPresenceHub(id(t, "space"), nil); !errors.Is(err, orchestration.ErrInvariant) {
+		t.Fatalf("a hub with no grantor returned %v, want ErrInvariant", err)
+	}
+
+	hub := presenceHub(t, g)
+	channel := id(t, "channel-a")
+
+	if err := hub.AddChannel(orchestration.ID{}); !errors.Is(err, orchestration.ErrInvariant) {
+		t.Fatalf("adding a channel with no identifier returned %v, want ErrInvariant", err)
+	}
+	if err := hub.AddChannel(channel); err != nil {
+		t.Fatalf("AddChannel: %v", err)
+	}
+	if err := hub.AddChannel(channel); !errors.Is(err, orchestration.ErrInvariant) {
+		t.Fatalf("adding the same channel twice returned %v, want ErrInvariant", err)
+	}
+
+	if _, err := hub.Attach("", orchestration.Person(id(t, "someone"))); !errors.Is(err, orchestration.ErrInvariant) {
+		t.Fatalf("attaching a client with no identifier returned %v, want ErrInvariant", err)
+	}
+	if _, err := hub.Attach("nobody", orchestration.Person(orchestration.ID{})); !errors.Is(err, orchestration.ErrInvariant) {
+		t.Fatalf("attaching a client with no principal returned %v, want ErrInvariant", err)
+	}
+	if _, err := hub.Attach("watcher", orchestration.Person(id(t, "watcher-member"))); err != nil {
+		t.Fatalf("Attach: %v", err)
+	}
+	if _, err := hub.Attach("watcher", orchestration.Person(id(t, "watcher-member"))); !errors.Is(err, orchestration.ErrInvariant) {
+		t.Fatalf("attaching the same client twice returned %v, want ErrInvariant", err)
+	}
+
+	if _, err := hub.Subscribe("stranger", channel); !errors.Is(err, orchestration.ErrNoSuchClient) {
+		t.Fatalf("subscribing an unattached client returned %v, want ErrNoSuchClient", err)
+	}
+
+	// A member who was never present reporting that they are in no channel is
+	// not a change, and it is a report a reconnecting client can genuinely
+	// send.
+	if hub.Apply(orchestration.PresenceReport{Member: id(t, "ghost-member"), Seq: 1}) {
+		t.Fatal("a leave from a member who was never present was reported as a change")
+	}
+	// A report naming no member at all is refused rather than folded in under
+	// the zero identifier.
+	if hub.Apply(orchestration.PresenceReport{Seq: 1, Channel: channel, Since: presenceAt(0)}) {
+		t.Fatal("a report naming no member was applied")
+	}
+	if hub.Apply(orchestration.PresenceReport{Member: id(t, "someone"), Channel: channel, Since: presenceAt(0)}) {
+		t.Fatal("a report at sequence zero was applied")
+	}
+	if got := hub.Projection().Count(channel); got != 0 {
+		t.Fatalf("three refused reports left %d in the channel, want 0", got)
+	}
+}
+
+// TestDetachAndUnsubscribeStopTheFanOut covers the two calls that take a client
+// back out again. Both are total: neither reports anything, and a caller that
+// names something it does not hold is not a fault.
+func TestDetachAndUnsubscribeStopTheFanOut(t *testing.T) {
+	channel := id(t, "channel-a")
+	hub := presenceHub(t, seesEverything())
+	if err := hub.AddChannel(channel); err != nil {
+		t.Fatalf("AddChannel: %v", err)
+	}
+	for _, c := range []orchestration.ClientID{"staying", "leaving"} {
+		if _, err := hub.Attach(c, orchestration.Person(id(t, string(c)+"-member"))); err != nil {
+			t.Fatalf("Attach(%s): %v", c, err)
+		}
+		subscribePresence(t, hub, c, channel)
+	}
+
+	// Neither call reports anything, including for a client and a channel
+	// nobody holds.
+	hub.Detach("never-attached")
+	hub.Unsubscribe("never-attached", channel)
+	hub.Unsubscribe("staying", id(t, "channel-never-added"))
+
+	hub.Unsubscribe("staying", channel)
+	hub.Detach("leaving")
+
+	applyPresence(t, hub, id(t, "walker"), 1, channel, presenceAt(0))
+	deliveries := hub.Flush()
+	if len(deliveries) != 1 || deliveries[0].Client != "staying" {
+		t.Fatalf("after one detach and one unsubscribe the flush produced %+v, want one message to staying", deliveries)
+	}
+	if got := deliveries[0].Message.Members; len(got) != 0 {
+		t.Fatalf("an unsubscribed client received %d member updates, want 0", len(got))
+	}
+	if got := deliveries[0].Message.Counts; len(got) != 1 {
+		t.Fatalf("the remaining client received %d count updates, want 1", len(got))
+	}
+}
+
+// TestTwoArrivalsInOneIntervalAreOrderedAndTheListIsOrderedByArrival covers the
+// two orderings the fan-out depends on and that a single-member case cannot
+// reach: the coalesced updates for one channel, and the occupant list.
+//
+// The list is longest present first, so a viewer reading it sees the people who
+// were already talking above the person who has just walked in, and the order
+// does not jump when somebody unrelated arrives.
+func TestTwoArrivalsInOneIntervalAreOrderedAndTheListIsOrderedByArrival(t *testing.T) {
+	channel := id(t, "channel-a")
+	early, late := id(t, "member-early"), id(t, "member-late")
+
+	hub := presenceHub(t, seesEverything())
+	if err := hub.AddChannel(channel); err != nil {
+		t.Fatalf("AddChannel: %v", err)
+	}
+	if _, err := hub.Attach("watcher", orchestration.Person(id(t, "watcher-member"))); err != nil {
+		t.Fatalf("Attach: %v", err)
+	}
+	subscribePresence(t, hub, "watcher", channel)
+
+	// Applied late first, so the ordering in the message cannot come from the
+	// order the reports arrived in.
+	applyPresence(t, hub, late, 1, channel, presenceAt(30))
+	applyPresence(t, hub, early, 1, channel, presenceAt(10))
+
+	deliveries := hub.Flush()
+	if len(deliveries) != 1 {
+		t.Fatalf("two arrivals in one interval produced %d messages, want 1", len(deliveries))
+	}
+	got := deliveries[0].Message.Members
+	want := []orchestration.PresenceMemberUpdate{
+		{Channel: channel, Member: early, Present: true, Now: orchestration.Presence{Channel: channel, Member: early, SinceUnix: presenceAt(10).Unix()}},
+		{Channel: channel, Member: late, Present: true, Now: orchestration.Presence{Channel: channel, Member: late, SinceUnix: presenceAt(30).Unix()}},
+	}
+	assertMemberUpdates(t, "watcher", got, want)
+	if counts := deliveries[0].Message.Counts; len(counts) != 1 || counts[0].Count != 2 {
+		t.Fatalf("two arrivals coalesced to %+v, want one update reading 2", counts)
+	}
+
+	occupants := hub.Projection().Occupants(channel)
+	if len(occupants) != 2 || occupants[0].Member != early || occupants[1].Member != late {
+		t.Fatalf("the occupant list is %v, want the earlier arrival first", occupants)
+	}
+
+	// Two people arriving in the same second is the tie the list still has to
+	// break, because the published field is whole seconds and two people
+	// walking in together is the ordinary case rather than a coincidence.
+	together := id(t, "member-alongside")
+	applyPresence(t, hub, together, 1, channel, presenceAt(10))
+	hub.Flush()
+	occupants = hub.Projection().Occupants(channel)
+	if len(occupants) != 3 {
+		t.Fatalf("the occupant list holds %d, want 3", len(occupants))
+	}
+	if occupants[0].Member != together || occupants[1].Member != early || occupants[2].Member != late {
+		t.Fatalf("the occupant list is %v, want the same-second arrivals in identifier order ahead of the later one", occupants)
+	}
+
+	// The rendering used in a failure message, so a broken one is not
+	// discovered by a test that was already failing.
+	if got, want := occupants[1].String(), fmt.Sprintf("%s in %s since %d muted=false", early, channel, presenceAt(10).Unix()); got != want {
+		t.Fatalf("a presence renders as %q, want %q", got, want)
+	}
+}
