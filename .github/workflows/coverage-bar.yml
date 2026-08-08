@@ -16,7 +16,13 @@
 # internal/orchestration, at de6263fbfedafa3c0d4df4f62fbe06d712b1fa44, taken
 # with the same two commands this job runs, which is 305 of 306 statements. The
 # whole-tree figure at that commit was 86.5 percent and is reported rather than
-# gated. The bar sits just below the measurement rather than at a round target,
+# gated. internal/signalling measured 100.0 percent on the change that added it,
+# by the same route:
+#
+#     go test ./... -covermode=atomic -coverprofile=cover.out
+#     go tool cover -func=cover.out | grep 'internal/signalling'
+#
+# The bar sits just below the measurement rather than at a round target,
 # so it is a ratchet against regression and not a number somebody games on the
 # day it lands. Raising it is a decision somebody argues for in a commit, and so
 # is lowering it.
@@ -27,14 +33,17 @@
 #
 # The surface issue #72 names is authentication, the permission model,
 # credential minting for the media plane, the protocol decoder, and the
-# moderation actions. Only the permission model exists today, in
+# moderation actions. Two of the five exist today. The permission model is in
 # internal/orchestration, and the bar is measured over that whole package rather
 # than over the one file, because a decision that moves between files inside a
 # package would otherwise leave the surface without anybody editing a list. The
-# other four arrive with #28, #41, #30 and #39, and they reach this file through
-# the unclassified-package refusal rather than through a guessed package name
-# written here in advance, because a guessed name nobody happens to use is a
-# rule that never fires and says nothing.
+# protocol decoder is in internal/signalling and arrived with #30, which is the
+# path this file describes working as intended: the package landed, it was in
+# neither list, the check refused it, and the change that added it put it on the
+# surface. The other three arrive with #28, #41 and #39, and they reach this
+# file the same way rather than through a guessed package name written here in
+# advance, because a guessed name nobody happens to use is a rule that never
+# fires and says nothing.
 #
 # It fails closed. An unreadable, empty or unparseable profile is a refusal, and
 # the step proves that before it measures anything: it runs the same two
@@ -104,6 +113,7 @@ jobs:
 
           cat > "$work/surface" <<'LIST'
           github.com/iderex/stammtisch/internal/orchestration
+          github.com/iderex/stammtisch/internal/signalling
           LIST
 
           cat > "$work/outside" <<'LIST'
