@@ -16,8 +16,8 @@
 # internal/orchestration, at de6263fbfedafa3c0d4df4f62fbe06d712b1fa44, taken
 # with the same two commands this job runs, which is 305 of 306 statements. The
 # whole-tree figure at that commit was 86.5 percent and is reported rather than
-# gated. internal/signalling measured 100.0 percent on the change that added it,
-# by the same route:
+# gated. internal/signalling and internal/auth each measured 100.0 percent on the
+# change that added them, by the same route:
 #
 #     go test ./... -covermode=atomic -coverprofile=cover.out
 #     go tool cover -func=cover.out | grep 'internal/signalling'
@@ -37,13 +37,15 @@
 # internal/orchestration, and the bar is measured over that whole package rather
 # than over the one file, because a decision that moves between files inside a
 # package would otherwise leave the surface without anybody editing a list. The
-# protocol decoder is in internal/signalling and arrived with #30, which is the
-# path this file describes working as intended: the package landed, it was in
-# neither list, the check refused it, and the change that added it put it on the
-# surface. The other three arrive with #28, #41 and #39, and they reach this
-# file the same way rather than through a guessed package name written here in
-# advance, because a guessed name nobody happens to use is a rule that never
-# fires and says nothing.
+# protocol decoder is in internal/signalling and arrived with #30. Credential
+# storage is in internal/auth and arrived with the first half of #28. Both took
+# the path this file describes working as intended: the package landed, it was
+# in neither list, the check refused it, and the change that added it put it on
+# the surface. The two still to come are credential minting for the media plane
+# in #41 and the moderation actions in #39, and they reach this file the same
+# way rather than through a guessed package name written here in advance,
+# because a guessed name nobody happens to use is a rule that never fires and
+# says nothing.
 #
 # It fails closed. An unreadable, empty or unparseable profile is a refusal, and
 # the step proves that before it measures anything: it runs the same two
@@ -112,6 +114,7 @@ jobs:
           # else in this file decides which packages are gated.
 
           cat > "$work/surface" <<'LIST'
+          github.com/iderex/stammtisch/internal/auth
           github.com/iderex/stammtisch/internal/orchestration
           github.com/iderex/stammtisch/internal/signalling
           LIST
