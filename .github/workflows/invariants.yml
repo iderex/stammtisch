@@ -1,0 +1,316 @@
+# The structural invariants, as patterns a machine refuses.
+#
+# Several rules on this board are structural and cheap to check by pattern: no
+# direct clock read in the orchestration packages, no logging outside the one
+# surface, no media plane import in the orchestration packages, and no
+# permission decision outside the one function. Each was written as a
+# requirement on some issue, and a requirement no machine refuses is an
+# explanation of a rule rather than a rule.
+#
+# Three of them already have a stronger guard inside the unit suite, which reads
+# the syntax tree and can tell a call from a declaration where a pattern cannot.
+# This check is not a replacement for those and does not repeat what they prove.
+# It covers the direction they cannot: a Go guard lives in one package and
+# judges that package, so a rule stops covering the tree the moment the work
+# lands somewhere else, and nothing says so. A pattern rule is keyed on a path
+# prefix, so it reaches a package that does not exist yet, which is the case
+# that actually arrives.
+#
+# The rules are data. They sit in the block below, one stanza each, and the code
+# under them applies whatever is in that block and decides nothing itself. Issue
+# #76 declares `Scope: .github/workflows/`, so a configuration file beside the
+# two scripts in `.github/` would be a path outside it, and the block is in this
+# file for that reason rather than because a data file would be worse.
+#
+# Every rule ships two fixtures and the run refuses a rule missing either. The
+# fixture that has to bite is the near miss rather than an obvious violation: a
+# blank import rather than a used one, a call on a receiver against a method
+# declaration of the same name, `fmt.Errorf` beside `fmt.Print`. Each rule is
+# also run against a file outside its own paths, and against its own exempt
+# paths where it has any, so a rule that fires everywhere fails here rather than
+# in somebody's unrelated change.
+#
+# A rule whose paths hold no file today says so in the run and passes. That is
+# how a rule written before the code it covers reads, and printing it is what
+# stops a green run being read as a rule that found nothing.
+#
+# One invariant #76 names is not in the block. There is no rule for a direct
+# device call from the client logic package, because no client platform has been
+# chosen, the package does not exist, and the call such a rule would refuse is
+# named by the platform. #58 is where the platform is chosen; the rule belongs
+# to whichever change first creates that package. Writing a pattern for a device
+# API nobody has picked is a rule that never fires and says nothing, which is
+# the state this whole file exists to leave.
+#
+# Hardened the same way as every other workflow here: read-only permissions at
+# the top level, every action pinned by commit with a version comment, and
+# checkout without persisted credentials.
+name: Invariants
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# Read-only: the job reads the tree and writes nothing back.
+permissions:
+  contents: read
+
+# A newer run on the same ref supersedes an in-flight one. Nothing here
+# publishes, so cancelling a superseded run is safe.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # The check-run name is "Greppable invariants" and it is the literal name a
+  # required status check would have to carry. Renaming this job renames the
+  # check run and silently detaches it from any rule that requires it. Issue #25
+  # is where that rule is asked for, and this comment is the record of the name
+  # it would have to name.
+  invariants:
+    name: Greppable invariants
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Prove every rule bites, then scan the tree
+        run: |
+          set -eu
+
+          work=$(mktemp -d)
+          trap 'rm -rf "$work"' EXIT
+
+          # ---- the rules ----------------------------------------------------
+          #
+          # One stanza per rule, separated by a blank line. Every field is
+          # required except `exempt`, which may be empty.
+          #
+          #   rule     the identifier, and the name a refusal is reported under
+          #   paths    the path prefix the rule applies to
+          #   files    the filename glob inside those paths
+          #   exempt   path prefixes the rule does not apply to, comma separated
+          #   pattern  an extended regular expression; a match is a refusal
+          #   why      the failure the rule prevents
+          #   bites    a line the rule has to refuse
+          #   allows   a line it has to leave alone, chosen to be the near miss
+
+          cat > "$work/rules.conf" <<'RULES'
+          rule: clock-read-in-orchestration
+          paths: internal/orchestration/
+          files: *.go
+          exempt:
+          pattern: (^|[^[:alnum:]_.])time\.(Now|Since|Until|Sleep|After|AfterFunc|Tick|NewTimer|NewTicker)\(
+          why: this layer is made of grace periods and reconnect windows, and every one of them is untestable in a suite that waits for real time to pass. Time arrives through the injected Clock. Issue #24.
+          bites: 	if elapsed := time.Since(m.joinedAt); elapsed > grace {
+          allows: 	var grace time.Duration = deadline.Sub(m.joinedAt)
+
+          rule: media-import-in-orchestration
+          paths: internal/orchestration/
+          files: *.go
+          exempt:
+          pattern: ^[[:space:]]*(_[[:space:]]+|[[:alnum:]_]+[[:space:]]+)?"github\.com/iderex/stammtisch/internal/media(/|")
+          why: the orchestration layer stays importable with no media dependency, which is what lets the unit suite run on a machine with no audio device and nothing to forward media to.
+          bites: 	_ "github.com/iderex/stammtisch/internal/media"
+          allows: // The port is in github.com/iderex/stammtisch/internal/media and is passed in.
+
+          rule: permission-decision-outside-the-model
+          paths: internal/orchestration/
+          files: *.go
+          exempt: internal/orchestration/permission.go
+          pattern: \.(Granted|has)\(
+          why: one function decides a permission. A second decision site is how a bot skips a check a person takes, and it is written by reading a grant set directly instead of asking. Issue #29.
+          bites: 	if grants.Granted(p, s).has(SeeChannel) {
+          allows: func (f fakeGrantor) Granted(p Principal, s SpaceID) PermissionSet {
+
+          rule: logging-outside-the-log-surface
+          paths: internal/
+          files: *.go
+          exempt:
+          pattern: (^|[^[:alnum:]_.])(log|slog)\.[A-Z]|(^|[^[:alnum:]_.])fmt\.(Print|Fprint)|(^|[^[:alnum:]_.])println\(
+          why: a log that carries no conversation content is only checkable where there is one place logs are written. A package printing for itself is a second surface nobody reviewed. Issue #67 builds that surface, and the package it lands in is what goes on this rule's exempt line.
+          bites: 	log.Printf("member %s joined %s", m.Name, ch.Name)
+          allows: 	return fmt.Errorf("member %s is not in channel %s", m.ID, ch.ID)
+          RULES
+
+          # ---- reading the rules --------------------------------------------
+
+          mkdir "$work/rules"
+          awk -v dir="$work/rules" '
+            /^rule: /       { n++; file = sprintf("%s/%03d", dir, n) }
+            n && NF && $0 !~ /^#/ { print > file }
+          ' "$work/rules.conf"
+
+          if [ -z "$(ls -A "$work/rules")" ]; then
+            echo "REFUSED: the rule block parsed to no rules at all"
+            exit 1
+          fi
+
+          # Everything after the first "key: " on its own line, so a pattern
+          # keeps its own spaces and its own colons.
+          field() {
+            sed -n "s/^$2: //p; s/^$2:\$//p" "$1" | head -n 1
+          }
+
+          # ---- applying one rule --------------------------------------------
+          #
+          # One code path judges the tree and the fixtures alike. What differs
+          # between them is the root it is pointed at, which is why the fixtures
+          # are laid out as real files under real paths rather than fed in as
+          # text.
+
+          apply() {
+            apply_root=$1
+            apply_rule=$2
+
+            a_paths=$(field "$apply_rule" paths)
+            a_files=$(field "$apply_rule" files)
+            a_exempt=$(field "$apply_rule" exempt)
+            a_pattern=$(field "$apply_rule" pattern)
+
+            : > "$work/hits"
+            if [ ! -e "$apply_root/$a_paths" ]; then
+              return 0
+            fi
+
+            find "$apply_root/$a_paths" -type f -name "$a_files" \
+              | sed "s|^$apply_root/||" | sort > "$work/candidates"
+
+            : > "$work/hits"
+            printf '%s\n' "$a_exempt" | tr ',' '\n' | tr -d '[:blank:]' > "$work/ex"
+            while read -r rel; do
+              skip=0
+              while read -r ex; do
+                [ -n "$ex" ] || continue
+                ex=${ex%/}
+                case "$rel" in
+                  "$ex"|"$ex"/*) skip=1 ;;
+                esac
+              done < "$work/ex"
+              [ "$skip" -eq 0 ] || continue
+              grep -nE "$a_pattern" "$apply_root/$rel" \
+                | sed "s|^|$rel:|" >> "$work/hits" || true
+            done < "$work/candidates"
+
+            [ ! -s "$work/hits" ]
+          }
+
+          # ---- the proof, run before the tree is judged ---------------------
+
+          proof_failures=0
+
+          plant() {
+            plant_dir=$(dirname "$1/$2")
+            mkdir -p "$plant_dir"
+            printf '%s\n' "$3" > "$1/$2"
+          }
+
+          expect() {
+            want=$1
+            root=$2
+            rulefile=$3
+            what=$4
+            if apply "$root" "$rulefile" > /dev/null 2>&1; then
+              got=allowed
+            else
+              got=refused
+            fi
+            if [ "$got" = "$want" ]; then
+              printf '  proved %s: %s\n' "$want" "$what"
+            else
+              printf '  PROOF FAILED: %s was %s, and it is %s\n' "$id" "$got" "$what"
+              proof_failures=1
+            fi
+          }
+
+          for rulefile in "$work"/rules/*; do
+            id=$(field "$rulefile" rule)
+            paths=$(field "$rulefile" paths)
+            files=$(field "$rulefile" files)
+            exempt=$(field "$rulefile" exempt)
+            pattern=$(field "$rulefile" pattern)
+            why=$(field "$rulefile" why)
+            bites=$(field "$rulefile" bites)
+            allows=$(field "$rulefile" allows)
+
+            echo "$id"
+
+            missing=
+            [ -n "$paths" ]   || missing="$missing paths"
+            [ -n "$files" ]   || missing="$missing files"
+            [ -n "$pattern" ] || missing="$missing pattern"
+            [ -n "$why" ]     || missing="$missing why"
+            [ -n "$bites" ]   || missing="$missing bites"
+            [ -n "$allows" ]  || missing="$missing allows"
+            if [ -n "$missing" ]; then
+              printf '  PROOF FAILED: the rule declares no%s, so nothing here shows it bites\n' "$missing"
+              proof_failures=1
+              continue
+            fi
+
+            # The name is derived from the rule's own glob so a rule over
+            # something other than Go source proves itself the same way.
+            leaf=$(printf '%s' "$files" | sed 's/^\*//')
+            [ -n "$leaf" ] || leaf=.fixture
+            fx="$work/fx/$id"
+            rm -rf "$fx"
+
+            plant "$fx/bites"   "$paths/near_miss$leaf"     "$bites"
+            plant "$fx/allows"  "$paths/near_miss$leaf"     "$allows"
+            plant "$fx/outside" "elsewhere/near_miss$leaf"  "$bites"
+
+            expect refused "$fx/bites"   "$rulefile" "the line the rule is about"
+            expect allowed "$fx/allows"  "$rulefile" "the near miss beside it"
+            expect allowed "$fx/outside" "$rulefile" "the same line outside the rule's paths"
+
+            if [ -n "$exempt" ]; then
+              first_exempt=$(printf '%s' "$exempt" | cut -d, -f1 | tr -d '[:blank:]')
+              plant "$fx/exempt" "$first_exempt" "$bites"
+              # Everything the rule covers other than the exempt path has to
+              # stay covered, so the exempt tree carries the violation twice and
+              # only one of the two is forgiven.
+              expect allowed "$fx/exempt" "$rulefile" "the same line inside $first_exempt"
+              plant "$fx/exempt-neighbour" "$first_exempt" "$bites"
+              plant "$fx/exempt-neighbour" "$paths/near_miss$leaf" "$bites"
+              expect refused "$fx/exempt-neighbour" "$rulefile" "a neighbour of the exempt file, which the exemption may not reach"
+            fi
+          done
+
+          if [ "$proof_failures" -ne 0 ]; then
+            echo
+            echo "REFUSED: a rule did not prove it can say no, so the tree is not judged"
+            exit 1
+          fi
+
+          # ---- the tree -----------------------------------------------------
+
+          echo
+          echo "judging ."
+          failed=0
+          for rulefile in "$work"/rules/*; do
+            id=$(field "$rulefile" rule)
+            paths=$(field "$rulefile" paths)
+            files=$(field "$rulefile" files)
+            why=$(field "$rulefile" why)
+
+            if [ ! -e "./$paths" ]; then
+              printf '  not asked: %s covers %s, which this tree does not hold yet\n' "$id" "$paths"
+              continue
+            fi
+            count=$(find "./$paths" -type f -name "$files" | wc -l | tr -d '[:blank:]')
+
+            if apply "." "$rulefile"; then
+              printf '  ok        %s over %s file(s) under %s\n' "$id" "$count" "$paths"
+            else
+              printf '  REFUSED   %s over %s file(s) under %s\n' "$id" "$count" "$paths"
+              sed 's/^/              /' "$work/hits"
+              printf '            %s\n' "$why"
+              failed=1
+            fi
+          done
+
+          exit "$failed"
