@@ -1,50 +1,65 @@
 # Coverage-guided fuzzing, on a schedule and on demand.
 #
-# The protocol decoder is what an unauthenticated peer reaches first. The
-# property tests beside it in the unit suite cover the properties somebody
-# thought to state; this covers the inputs nobody thought of, by letting the
-# toolchain's own coverage-guided engine evolve a corpus over minutes rather
-# than seconds.
+# Two surfaces are reached by bytes somebody else chose, and both are fuzzed
+# here. The protocol decoder is what an unauthenticated peer sends to first. The
+# reader of a stored credential is what a compromised or corrupted account store
+# reaches, and it is the code that decides what a stored value means, so a value
+# it accepts wrongly is a memory-hard comparison turned into a fast one.
+#
+# The property tests beside both cover the properties somebody thought to state.
+# This covers the inputs nobody thought of, by letting the toolchain's own
+# coverage-guided engine evolve a corpus over minutes rather than seconds.
 #
 # It has no pull_request trigger and no push trigger, deliberately. A run that
 # is worth doing is minutes long, so putting it on a pull request would pay that
 # cost on every push and would gate a merge on a search whose result is a
 # function of how long it ran rather than of what the change did. A fuzzer that
-# found nothing in ten minutes has not said the decoder is correct. It has said
-# it did not find anything in ten minutes, and a green required check that means
+# found nothing in ten minutes has not said the code is correct. It has said it
+# did not find anything in ten minutes, and a green required check that means
 # that is worse than no check. So this gates nothing and reports instead, which
 # is what issue #74 asks for in those words.
 #
 # The schedule is weekly. Manual runs take a duration, so somebody chasing a
 # suspicion can run it for longer than the schedule does without editing this
-# file.
+# file. The duration is per target rather than shared, so adding a target does
+# not quietly halve what the existing ones get.
+#
+# What is NOT fuzzed, so a reader does not take this for more than it is. The
+# credential target drives the reader of a stored value and not the comparison
+# above it. That comparison is one call to argon2 at the cost parameters the
+# value carries, which is tens of milliseconds per execution, and a search needs
+# millions of them; putting it inside the loop would turn a search into a
+# benchmark and find nothing. The parse surface is where the branches that can
+# be wrong about a value live.
 #
 # WHAT TO DO WITH A CRASHER, written here before the first one arrives so it is
 # not decided by whoever is unlucky enough to meet it at the wrong hour.
 #
 #   1. The run is red and the crasher is in the `fuzz-findings` artifact, under
-#      `testdata/fuzz/<target>/`. Download it.
+#      `<package>/testdata/fuzz/<target>/`. Download it.
 #   2. Open an issue. It is a finding with its own triage, not something patched
 #      quietly inside this harness, and it carries the artifact's input as the
 #      evidence.
-#   3. Commit the crasher file into `internal/signalling/testdata/fuzz/<target>/`
-#      on the branch that fixes it. The toolchain then runs it as a seed on every
-#      ordinary `go test`, so the case is refused for good rather than only until
-#      the corpus is next discarded. Issue #38 owns that corpus.
-#   4. Fix the decoder, not the harness. A crasher that becomes uninteresting
+#   3. Commit the crasher file into that same path in the tree, on the branch
+#      that fixes it. The toolchain then runs it as a seed on every ordinary
+#      `go test`, so the case is refused for good rather than only until the
+#      corpus is next discarded. Issue #38 owns that corpus for the decoder.
+#   4. Fix the code, not the harness. A crasher that becomes uninteresting
 #      because the fuzz target stopped asserting the property is a defect that
 #      was renamed.
 #
 # It fails closed and it proves that before it searches anything. A fuzz job
 # that reds only when it finds something is indistinguishable from one whose
 # assertions have been quietly weakened, because both are green forever. So the
-# first step builds a copy of the package with one edit that breaks one of the
-# properties the target asserts, runs the same target against it, and refuses to
-# fuzz the tree at all unless that copy was caught. The edit is the smallest one
-# that matters: the refusal path returns a frame as well as an error, which is
-# the "either a message or an error, never both" property and is exactly the
-# shape a decoder acquires when somebody adds a partial result to an error
-# return for debugging and leaves it there.
+# first step takes a copy of the tree, makes one edit per target that breaks one
+# of the properties that target asserts, runs both against the copy, and refuses
+# to fuzz anything unless both were caught.
+#
+# Each edit is the smallest one that matters. The decoder's refusal path returns
+# a frame as well as an error, which is the shape a decoder acquires when
+# somebody adds a partial result to an error return for debugging and leaves it
+# there. The credential reader stops refusing a cost of zero, which is the shape
+# it acquires when somebody decides the parameters are the caller's business.
 #
 # Hardened the same way as every other workflow here: read-only permissions at
 # the top level, every action pinned by commit with a version comment, and
@@ -58,7 +73,7 @@ on:
   workflow_dispatch:
     inputs:
       minutes:
-        description: "Minutes to fuzz for"
+        description: "Minutes to fuzz each target for"
         required: false
         default: "10"
 
@@ -78,7 +93,7 @@ jobs:
   fuzz:
     name: Fuzz
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       - name: Checkout Repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -94,40 +109,54 @@ jobs:
           go-version-file: go.mod
           cache: false
 
-      - name: Prove the target catches a broken decoder
+      - name: Prove every target catches a broken one
         run: |
           set -eu
 
           work=$(mktemp -d)
           trap 'rm -rf "$work"' EXIT
 
-          mkdir -p "$work/proof/signalling"
-          cp internal/signalling/*.go "$work/proof/signalling/"
+          # The tracked tree, so the copy is what ships and not what a build
+          # left lying about.
+          mkdir "$work/tree"
+          git archive HEAD | tar -x -C "$work/tree"
 
-          # One edit, on the refusal path, so the decoder returns a frame as
-          # well as an error. Nothing else in the copy changes.
-          sed -i 's|return Frame{}, fmt.Errorf("%w: the header declares %d bytes and the bound is %d", ErrFrameTooLarge, declared, MaxPayloadSize)|return Frame{Payload: []byte{}}, fmt.Errorf("%w: the header declares %d bytes and the bound is %d", ErrFrameTooLarge, declared, MaxPayloadSize)|' \
-            "$work/proof/signalling/frame.go"
+          # One edit per target, each on a refusal path.
+          sed -i 's@return Frame{}, fmt.Errorf("%w: the header declares@return Frame{Payload: []byte{}}, fmt.Errorf("%w: the header declares@' \
+            "$work/tree/internal/signalling/frame.go"
+          sed -i 's@if p\.memory == 0 .*{$@if false {@' \
+            "$work/tree/internal/auth/credential.go"
 
-          if ! grep -q 'Frame{Payload: \[\]byte{}}' "$work/proof/signalling/frame.go"; then
-            echo "REFUSED: the edit this proof depends on did not apply, so nothing here was proved"
+          # An edit that did not apply would produce a proof of nothing, so each
+          # is confirmed before anything is run.
+          grep -q 'Frame{Payload: \[\]byte{}}' "$work/tree/internal/signalling/frame.go" \
+            || { echo "REFUSED: the decoder edit did not apply, so nothing here was proved"; exit 1; }
+          grep -q 'if false {' "$work/tree/internal/auth/credential.go" \
+            || { echo "REFUSED: the credential edit did not apply, so nothing here was proved"; exit 1; }
+
+          # The seeds alone reach both edited paths, so this costs seconds. A
+          # fuzztime is set anyway, so a proof that somehow stops catching one
+          # ends rather than taking the job's whole budget.
+          proof_failures=0
+          expect_caught() {
+            if (cd "$work/tree" && go test "./$1" -run '^$' -fuzz "$2" -fuzztime 20s) > "$work/proof.log" 2>&1; then
+              printf 'PROOF FAILED: %s passed against a broken %s\n' "$2" "$1"
+              sed 's/^/    /' "$work/proof.log"
+              proof_failures=1
+            else
+              printf 'proved refused: %s catches a broken %s\n' "$2" "$1"
+            fi
+          }
+
+          expect_caught internal/signalling FuzzDecode
+          expect_caught internal/auth FuzzStoredCredential
+
+          if [ "$proof_failures" -ne 0 ]; then
+            echo "REFUSED: a target did not prove it can say no, so nothing is fuzzed"
             exit 1
           fi
 
-          cd "$work/proof"
-          go mod init proof.invalid/fuzzproof > /dev/null
-
-          # The seeds alone reach the edited path, so this costs seconds. A
-          # fuzztime is set anyway, so a proof that somehow stops catching it
-          # ends rather than filling the job's whole budget.
-          if go test ./signalling -run '^$' -fuzz FuzzDecode -fuzztime 20s > "$work/proof.log" 2>&1; then
-            echo "PROOF FAILED: the fuzz target passed against a decoder that returns a frame and an error at once"
-            sed 's/^/    /' "$work/proof.log"
-            exit 1
-          fi
-          echo "proved refused: a decoder returning both a frame and an error"
-
-      - name: Fuzz the protocol decoder
+      - name: Fuzz every target
         env:
           # Through the environment rather than interpolated into the script, so
           # the input cannot become part of the command.
@@ -142,8 +171,18 @@ jobs:
               ;;
           esac
 
-          echo "fuzzing FuzzDecode for ${MINUTES}m"
-          go test ./internal/signalling -run '^$' -fuzz FuzzDecode -fuzztime "${MINUTES}m"
+          failed=0
+          for target in "internal/signalling FuzzDecode" "internal/auth FuzzStoredCredential"; do
+            set -- $target
+            echo
+            echo "fuzzing $2 in $1 for ${MINUTES}m"
+            go test "./$1" -run '^$' -fuzz "$2" -fuzztime "${MINUTES}m" || failed=1
+          done
+
+          # Every target runs even when an earlier one finds something, because
+          # a crasher in the first is not a reason to learn nothing about the
+          # second, and the run is red either way.
+          exit "$failed"
 
       - name: Collect what the run produced
         # Always, because the interesting run is the red one and its findings
@@ -157,8 +196,15 @@ jobs:
           # A crasher is written into the package's own testdata by the
           # toolchain. It is the file a fix commits, so it is collected first
           # and named as such.
-          if [ -d internal/signalling/testdata/fuzz ]; then
-            cp -r internal/signalling/testdata/fuzz findings/crashers
+          found=0
+          for pkg in internal/signalling internal/auth; do
+            if [ -d "$pkg/testdata/fuzz" ]; then
+              mkdir -p "findings/crashers/$pkg"
+              cp -r "$pkg/testdata/fuzz" "findings/crashers/$pkg/"
+              found=1
+            fi
+          done
+          if [ "$found" -eq 1 ]; then
             echo "crashers:"
             find findings/crashers -type f | sed 's/^/  /'
           else
