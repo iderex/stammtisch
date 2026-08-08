@@ -3,8 +3,16 @@
 This repository refuses some things outright and asks for others without any way
 of refusing them. The difference matters more than the rules do, so every rule
 below says which of the two it is. Where nothing refuses a violation, the rule is
-marked `NOT ENFORCED` and carries the issue that owes the mechanism. A rule with
-that mark is still a rule. It is just one that a person has to catch.
+marked `NOT ENFORCED` and carries the issue that owes the mechanism, or says that
+no mechanism is owed because there is nothing in a tree for a check to read. A
+rule with that mark is still a rule. It is just one that a person has to catch.
+
+A rule can be half of each. When a mechanism lands it
+usually covers one clause of a sentence and not the rest, so the mark splits
+rather than disappearing: the enforced half names the check, and the half that is
+still nobody's mechanism stays written down as such. A paragraph that lost its
+mark entirely when a check landed would be claiming cover the check does not
+give.
 
 ## Getting a change in
 
@@ -14,8 +22,19 @@ Every change starts as an issue and lands as a pull request.
     cd stammtisch
     git switch -c topic/short-name
 
-`NOT ENFORCED`, issue #77. Nothing today reads a pull request for an issue
-reference or refuses one that names none.
+REFUSED BY A CHECK for the second half of that sentence. The
+`Deterministic PR-hygiene checks` job in `.github/workflows/pr-hygiene.yml` reads
+the commit messages and the body for `#<number>` references, resolves each one
+against this repository, and refuses a change where none of them resolves to an
+issue. A number that resolves to a pull request is reported and does not count.
+The job fails closed: a reference it cannot read for any reason other than a 404
+reds the check rather than passing as absent.
+
+`NOT ENFORCED` for the first half, and no issue owes a mechanism for it. Nothing
+reads whether the issue says what is wrong, what the evidence is and what done
+means, and nothing can tell an issue opened before the work from one opened to
+justify a branch that already exists. Both are judgements about meaning, and the
+review is where a bad one is caught.
 
 Direct pushes to `main` are refused, by an active ruleset with no bypass actors.
 That one you can read for yourself:
@@ -55,23 +74,24 @@ Developer Certificate of Origin 1.1 and this sentence is the whole disclosure.
 
 ## What runs on a pull request
 
-Five workflows. What each one refuses is in its own file under
-`.github/workflows/`, and reading the file is the only way to know what it
-covers today:
+What each workflow refuses is in its own file under `.github/workflows/`, and
+reading the file is the only way to know what it covers today. How many there
+are is what the listing prints rather than a number written here, which is a
+number that goes wrong the first time one lands:
 
     ls .github/workflows/
     gh pr checks <number>
 
-There is no local gate on this board. Nothing here builds, because there is no
-code yet, and there is no single verb that runs the whole set on your machine.
-Two of the five have local equivalents you can run yourself, and they are the
-sign-off loop above and the Unicode scan below. The other three run on GitHub or
-not at all.
+There is no local gate on this board and no single verb that runs the whole set
+on your machine. Some of them have local equivalents you can run yourself: the
+sign-off loop above, the Unicode scan below, and the licence header scan, which
+is the same script the workflow runs. The rest run on GitHub or not at all.
 
-`NOT ENFORCED`, issue #25. None of the five is a required status check, so a red
-check does not by itself block a merge. The `types` list in the ruleset output
-above is where you can see that for yourself: it carries no
-`required_status_checks` entry. Wait for the checks and merge on green anyway.
+`NOT ENFORCED`, issue #25. Not one of them is a required status check, whatever
+their number is on the day you read this, so a red check does not by itself block
+a merge. The `types` list in the ruleset output above is where you can see that
+for yourself: it carries no `required_status_checks` entry. Wait for the checks
+and merge on green anyway.
 
 ## Unicode
 
@@ -91,6 +111,40 @@ Exit 1 is a clean tree. Exit 0 means a match was found and names it. Anything
 else is the scanner failing, which the workflow treats as a failure and so should
 you.
 
+## Licence headers
+
+Every tracked source file starts with the two lines that say what it is under:
+
+    // SPDX-License-Identifier: AGPL-3.0-or-later
+    // Copyright (C) 2026  iderex
+
+In a shell script the prefix is `#` and the two lines come after the shebang.
+
+The wording is not invented here. The appendix of `LICENSE` asks for the notice
+at the start of each source file, and for each file to carry at least the
+copyright line and a pointer to where the full notice is found. The identifier
+is that pointer. It carries the "or later" arm because the appendix, as this
+repository filled it in, offers that arm; if that was not intended, it is one
+string in the script and one line per source file, and #79 is where to say so.
+
+REFUSED BY A CHECK. The `Licence headers` job in
+`.github/workflows/licence-header.yml` runs `.github/check-licence-headers.sh`.
+It refuses a source file without the header, and it also refuses a tracked file
+whose extension it cannot classify. The second half is why the rule keeps
+covering the tree: a header check that only knows the file types the tree holds
+today stops covering it on the day somebody adds a language, and says nothing.
+Here an unknown extension is a red check asking to be classified.
+
+Run the same script yourself. It reports what it proved before it reports on
+the tree:
+
+    sh .github/check-licence-headers.sh
+
+That proof is not a branch somebody has to keep alive. The script builds faulty
+fixtures in a temporary directory, scans them, and refuses to report on the tree
+at all unless each one was refused and named. So a run saying the tree is clean
+is a run in which the scan was shown able to say otherwise.
+
 ## What a change carries
 
 One topic per pull request, and a body that says what was wrong, what the change
@@ -105,10 +159,26 @@ Before you push, look at what you actually touched:
 
     git diff --name-only origin/main...HEAD
 
-`NOT ENFORCED`, issue #77. Nothing reads a pull request body, compares changed
-paths against a declared scope, or judges whether a commit message says anything.
-The check that would do the mechanical half of this is owed there, and it will
-never do the other half, which is whether the reasoning is any good.
+REFUSED BY A CHECK for the paths. The `Deterministic PR-hygiene checks` job
+reads the body, takes the `Scope:` line out of every issue the change names, and
+refuses a change touching a path outside every one of them. `Scope:` is at
+column zero and the rest of the line is one path; a comma separates two.
+
+`NOT ENFORCED` for three halves of it, and they are different from each other.
+
+Where no referenced issue carries a `Scope:` line, the comparison is not made at
+all. The job says so in the log in those words and passes, so a change that
+declares no scope anywhere gets no path check rather than a refusal. That is the
+default and it fails open.
+
+Whether the work belongs to the issue it names, as opposed to merely landing in
+the same paths, is not read. A second unrelated topic inside one declared scope
+passes.
+
+Whether a commit message or a body says anything is not read. The job takes one
+thing out of a message, the issue reference, and judges nothing else: not whether
+the message says what changed, not whether the body says how you know it works,
+and not whether a number in it carries the command that produced it.
 
 ## Signatures
 

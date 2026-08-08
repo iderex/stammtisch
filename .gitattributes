@@ -1,0 +1,5 @@
+# Shell scripts are executed by an interpreter that treats a carriage return as
+# part of the shebang and part of every line, so a checkout that rewrote the
+# line endings would produce a script that fails on a syntax error rather than
+# on what it checks. Pin the working-tree form for those files.
+*.sh text eol=lf

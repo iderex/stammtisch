@@ -1,0 +1,109 @@
+# Static analysis of the server language.
+#
+# The workflow files here are already audited by zizmor and the repository is
+# scored by Scorecard, but neither of those reads a line of Go. This is the part
+# of the system most worth analysing: a signalling server terminates untrusted
+# connections, and the parse-and-validate surface behind them is where a defect
+# is reachable by anybody on the internet.
+#
+# THE QUERY SET IS DECLARED RATHER THAN LEFT AT THE DEFAULT, and the choice is
+# `security-extended`. The default suite is tuned for a low false-positive rate
+# across every project on the platform, which means it withholds queries whose
+# findings need a person to judge them. That trade is wrong here: this
+# repository's whole position is that a finding somebody has to think about is
+# cheaper than a vulnerability nobody saw, and the surface is small enough that
+# the extra volume is readable.
+#
+# `security-and-quality` was the other candidate and is not taken. It adds
+# maintainability and correctness queries on top of the security ones, which is
+# a different job from this one: `golangci-lint` already holds that ground in
+# the `Lint and format` gate, and having two tools report overlapping style
+# findings into the security dashboard makes the dashboard the wrong place to
+# look for a security finding.
+#
+# WHAT THIS DOES NOT REACH. CodeQL analyses the code that is here. There is
+# almost none: the server is a stub, and the packages this scans today are a
+# measurement rig, a clock and an empty orchestration package. A green run
+# against this tree says the queries found nothing in what exists, and says
+# nothing at all about the signalling code that is the reason for the job.
+#
+# It also does not gate a merge on its own. A CodeQL alert appears in the
+# security dashboard and the check run reports the analysis, not the triage
+# verdict; whether an alert blocks anything is a branch-protection decision and
+# #78 and #25 are where that is asked for.
+#
+# Hardened the same way as every other workflow here: read-only permissions at
+# the top level with the write scope granted only on the job that needs it,
+# every action pinned by commit with a version comment, and checkout without
+# persisted credentials.
+name: CodeQL
+
+on:
+  pull_request:
+  # The default branch needs its own analysis, because an alert is new or
+  # pre-existing only relative to a baseline, and the baseline is the analysis
+  # on main. Without this a pull request has nothing to be compared against.
+  push:
+    branches: [main]
+  # The weekly run is not redundant with the two above. Query packs change
+  # under an unchanged tree, so a file nobody has touched since March can
+  # become a finding, and only a scheduled run notices.
+  schedule:
+    - cron: "41 3 * * 2"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # The check-run name is "CodeQL" and it is the literal name a required status
+  # check would have to carry. Renaming this job renames the check run and
+  # silently detaches it from any rule that requires it. There is deliberately
+  # no matrix over languages: a matrix would make the name "CodeQL (go)" and
+  # would change it again the day a second language arrives.
+  analyse:
+    name: CodeQL
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      # Uploading the analysis to the code-scanning dashboard is the only write
+      # this job does.
+      security-events: write
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          # The floor comes from go.mod rather than from a number written here,
+          # so the toolchain this analysis builds with cannot drift from the one
+          # the module declares.
+          go-version-file: go.mod
+
+      - name: Initialise CodeQL
+        uses: github/codeql-action/init@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81 # v4.37.3
+        with:
+          languages: go
+          # The whole point of this job. See the header for why this suite and
+          # not the default or security-and-quality.
+          queries: security-extended
+
+      # The Go extractor builds the tree itself. It is run explicitly rather
+      # than through autobuild so that a build failure is a failure of this
+      # step, with the compiler's own message, instead of a CodeQL error a
+      # reader has to unpick.
+      - name: Build every package
+        run: go build ./...
+
+      - name: Analyse
+        uses: github/codeql-action/analyze@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81 # v4.37.3
+        with:
+          category: codeql-go

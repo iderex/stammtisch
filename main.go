@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026  iderex
+
 // Command stammtisch is the server. It does nothing yet.
 //
 // This file exists so that the language decision in
