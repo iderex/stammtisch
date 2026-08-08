@@ -34,4 +34,47 @@
 //
 // It also keeps the framing usable over any ordered stream, which is what lets
 // the whole of this package be tested with no network at all.
+//
+// # The version negotiation, as a client author has to implement it
+//
+// A connection speaks one version of this protocol and agrees it on the first
+// frame. Clients update when their user lets them and bots update when nobody
+// makes them, so a protocol with no version is one that can never change or one
+// that breaks people without saying so, and which of the two happens is decided
+// by accident rather than by anyone.
+//
+// The exchange is three frames and at most two of them travel:
+//
+//  1. The client sends KindHello carrying the version it proposes. This is the
+//     first frame on the connection, before the credential, because what a
+//     credential frame looks like is one of the things a version decides.
+//  2. If the proposal is inside the range this server speaks, the server sends
+//     KindVersionAgreed carrying the agreed version, and the connection carries
+//     on to the credential. A client reads that frame rather than assuming its
+//     proposal was taken whole.
+//  3. If it is outside the range, the server sends KindVersionRefused and stops.
+//     That frame carries the lowest and the highest version this server speaks,
+//     as numbers a client compares against, and a sentence naming the same two
+//     so a person reading a log is not left parsing a number out of an error
+//     code. A client that can speak one of them may open a new connection and
+//     propose it.
+//
+// A payload here is a sequence of fields, each two bytes of identifier, two
+// bytes of length, and that many bytes of value. Two rules run over that shape
+// and they only work as a pair:
+//
+//   - An unknown field inside a message this build knows is ignored. That is
+//     what lets a later version add a field to the hello without every older
+//     server refusing it.
+//   - An unknown message is an error, and a terminal one. That is what stops a
+//     later version's message from being silently dropped by an older server
+//     that then carries on as though the peer had said nothing.
+//
+// Kind.Known is the list a message is unknown against, and Conn.ReadFrame
+// refuses one on every read rather than only during the negotiation.
+//
+// What is not decided here is how far behind a client is allowed to be once
+// there is more than one version to be behind by. That is a policy about
+// support rather than a property of this code, and issue #91 is where it is
+// stated. This package holds the refusal and the range it is made against.
 package signalling

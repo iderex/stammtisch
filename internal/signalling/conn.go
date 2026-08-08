@@ -67,6 +67,17 @@ func (c *Conn) ReadFrame() (Frame, error) {
 		c.refused = fmt.Errorf("%w: it sent kind %d and only kind %d is accepted first", ErrUnauthenticated, f.Kind, KindAuthenticate)
 		return Frame{}, c.refused
 	}
+
+	// A kind this build does not define is refused here rather than passed on
+	// for somebody downstream to switch on and fall through. The refusal is
+	// terminal for the same reason the one above is: a peer speaking a message
+	// set this server does not have is in a state neither side can reason
+	// about, and reading the next frame is guessing which of the two of them
+	// was wrong.
+	if !f.Kind.Known() {
+		c.refused = fmt.Errorf("%w: it sent kind %d", ErrUnknownMessage, f.Kind)
+		return Frame{}, c.refused
+	}
 	return f, nil
 }
 
