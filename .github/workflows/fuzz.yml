@@ -1,0 +1,186 @@
+# Coverage-guided fuzzing, on a schedule and on demand.
+#
+# The protocol decoder is what an unauthenticated peer reaches first. The
+# property tests beside it in the unit suite cover the properties somebody
+# thought to state; this covers the inputs nobody thought of, by letting the
+# toolchain's own coverage-guided engine evolve a corpus over minutes rather
+# than seconds.
+#
+# It has no pull_request trigger and no push trigger, deliberately. A run that
+# is worth doing is minutes long, so putting it on a pull request would pay that
+# cost on every push and would gate a merge on a search whose result is a
+# function of how long it ran rather than of what the change did. A fuzzer that
+# found nothing in ten minutes has not said the decoder is correct. It has said
+# it did not find anything in ten minutes, and a green required check that means
+# that is worse than no check. So this gates nothing and reports instead, which
+# is what issue #74 asks for in those words.
+#
+# The schedule is weekly. Manual runs take a duration, so somebody chasing a
+# suspicion can run it for longer than the schedule does without editing this
+# file.
+#
+# WHAT TO DO WITH A CRASHER, written here before the first one arrives so it is
+# not decided by whoever is unlucky enough to meet it at the wrong hour.
+#
+#   1. The run is red and the crasher is in the `fuzz-findings` artifact, under
+#      `testdata/fuzz/<target>/`. Download it.
+#   2. Open an issue. It is a finding with its own triage, not something patched
+#      quietly inside this harness, and it carries the artifact's input as the
+#      evidence.
+#   3. Commit the crasher file into `internal/signalling/testdata/fuzz/<target>/`
+#      on the branch that fixes it. The toolchain then runs it as a seed on every
+#      ordinary `go test`, so the case is refused for good rather than only until
+#      the corpus is next discarded. Issue #38 owns that corpus.
+#   4. Fix the decoder, not the harness. A crasher that becomes uninteresting
+#      because the fuzz target stopped asserting the property is a defect that
+#      was renamed.
+#
+# It fails closed and it proves that before it searches anything. A fuzz job
+# that reds only when it finds something is indistinguishable from one whose
+# assertions have been quietly weakened, because both are green forever. So the
+# first step builds a copy of the package with one edit that breaks one of the
+# properties the target asserts, runs the same target against it, and refuses to
+# fuzz the tree at all unless that copy was caught. The edit is the smallest one
+# that matters: the refusal path returns a frame as well as an error, which is
+# the "either a message or an error, never both" property and is exactly the
+# shape a decoder acquires when somebody adds a partial result to an error
+# return for debugging and leaves it there.
+#
+# Hardened the same way as every other workflow here: read-only permissions at
+# the top level, every action pinned by commit with a version comment, and
+# checkout without persisted credentials.
+name: Fuzz
+
+on:
+  schedule:
+    # Weekly, at an hour nothing else here runs.
+    - cron: "41 2 * * 3"
+  workflow_dispatch:
+    inputs:
+      minutes:
+        description: "Minutes to fuzz for"
+        required: false
+        default: "10"
+
+# Read-only: the job reads the tree, searches, and uploads what it found. It
+# writes nothing back to the repository.
+permissions:
+  contents: read
+
+# Two runs of this are not the same run with different luck, and a scheduled one
+# that is superseded by a manual one has still done work worth keeping. Nothing
+# is cancelled.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  fuzz:
+    name: Fuzz
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          # The floor comes from go.mod rather than from a number written here,
+          # so the toolchain this job uses cannot drift from the one the module
+          # declares.
+          go-version-file: go.mod
+          cache: false
+
+      - name: Prove the target catches a broken decoder
+        run: |
+          set -eu
+
+          work=$(mktemp -d)
+          trap 'rm -rf "$work"' EXIT
+
+          mkdir -p "$work/proof/signalling"
+          cp internal/signalling/*.go "$work/proof/signalling/"
+
+          # One edit, on the refusal path, so the decoder returns a frame as
+          # well as an error. Nothing else in the copy changes.
+          sed -i 's|return Frame{}, fmt.Errorf("%w: the header declares %d bytes and the bound is %d", ErrFrameTooLarge, declared, MaxPayloadSize)|return Frame{Payload: []byte{}}, fmt.Errorf("%w: the header declares %d bytes and the bound is %d", ErrFrameTooLarge, declared, MaxPayloadSize)|' \
+            "$work/proof/signalling/frame.go"
+
+          if ! grep -q 'Frame{Payload: \[\]byte{}}' "$work/proof/signalling/frame.go"; then
+            echo "REFUSED: the edit this proof depends on did not apply, so nothing here was proved"
+            exit 1
+          fi
+
+          cd "$work/proof"
+          go mod init proof.invalid/fuzzproof > /dev/null
+
+          # The seeds alone reach the edited path, so this costs seconds. A
+          # fuzztime is set anyway, so a proof that somehow stops catching it
+          # ends rather than filling the job's whole budget.
+          if go test ./signalling -run '^$' -fuzz FuzzDecode -fuzztime 20s > "$work/proof.log" 2>&1; then
+            echo "PROOF FAILED: the fuzz target passed against a decoder that returns a frame and an error at once"
+            sed 's/^/    /' "$work/proof.log"
+            exit 1
+          fi
+          echo "proved refused: a decoder returning both a frame and an error"
+
+      - name: Fuzz the protocol decoder
+        env:
+          # Through the environment rather than interpolated into the script, so
+          # the input cannot become part of the command.
+          MINUTES: ${{ github.event.inputs.minutes || '10' }}
+        run: |
+          set -eu
+
+          case "$MINUTES" in
+            ''|*[!0-9]*)
+              echo "REFUSED: minutes must be a whole number, and it was '$MINUTES'"
+              exit 1
+              ;;
+          esac
+
+          echo "fuzzing FuzzDecode for ${MINUTES}m"
+          go test ./internal/signalling -run '^$' -fuzz FuzzDecode -fuzztime "${MINUTES}m"
+
+      - name: Collect what the run produced
+        # Always, because the interesting run is the red one and its findings
+        # are the whole reason to keep anything.
+        if: always()
+        run: |
+          set -eu
+
+          mkdir -p findings
+
+          # A crasher is written into the package's own testdata by the
+          # toolchain. It is the file a fix commits, so it is collected first
+          # and named as such.
+          if [ -d internal/signalling/testdata/fuzz ]; then
+            cp -r internal/signalling/testdata/fuzz findings/crashers
+            echo "crashers:"
+            find findings/crashers -type f | sed 's/^/  /'
+          else
+            echo "no crasher was written"
+          fi
+
+          # The evolved corpus lives in the build cache rather than in the tree,
+          # and it is the part that makes the next run start where this one
+          # stopped rather than from the seeds.
+          corpus="$(go env GOCACHE)/fuzz"
+          if [ -d "$corpus" ]; then
+            cp -r "$corpus" findings/corpus
+            echo "corpus entries: $(find findings/corpus -type f | wc -l)"
+          else
+            echo "no corpus directory was produced"
+          fi
+
+      - name: Archive them
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: fuzz-findings
+          path: findings
+          if-no-files-found: warn
+          retention-days: 90
