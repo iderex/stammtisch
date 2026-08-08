@@ -1,0 +1,406 @@
+# The coverage bar, keyed on the surface that decides security outcomes.
+#
+# A whole-codebase percentage is a number that goes up when somebody tests the
+# easy parts. This job reports that number and gates on neither more nor less
+# than the packages that decide an outcome an attacker cares about.
+#
+# Two lists are the whole design. Every package in the module is in exactly one
+# of them: the surface, which has to meet the bar, or the outside, which is
+# reported and not gated and carries the reason it is not a surface. A package
+# in neither reds this check. That is what stops the gate quietly narrowing: a
+# new package arrives unclassified and the check refuses until somebody says
+# which it is, so authentication landing in a package nobody added to a list
+# cannot pass as covered.
+#
+# The bar is 99.5 percent. The first measurement was 99.7 percent on
+# internal/orchestration, at de6263fbfedafa3c0d4df4f62fbe06d712b1fa44, taken
+# with the same two commands this job runs, which is 305 of 306 statements. The
+# whole-tree figure at that commit was 86.5 percent and is reported rather than
+# gated. The bar sits just below the measurement rather than at a round target,
+# so it is a ratchet against regression and not a number somebody games on the
+# day it lands. Raising it is a decision somebody argues for in a commit, and so
+# is lowering it.
+#
+# This file is the record as well as the check. Issue #72 declares
+# `Scope: .github/workflows/`, so a document under docs/ would be a path outside
+# it, and the numbers above are written here for that reason.
+#
+# The surface issue #72 names is authentication, the permission model,
+# credential minting for the media plane, the protocol decoder, and the
+# moderation actions. Only the permission model exists today, in
+# internal/orchestration, and the bar is measured over that whole package rather
+# than over the one file, because a decision that moves between files inside a
+# package would otherwise leave the surface without anybody editing a list. The
+# other four arrive with #28, #41, #30 and #39, and they reach this file through
+# the unclassified-package refusal rather than through a guessed package name
+# written here in advance, because a guessed name nobody happens to use is a
+# rule that never fires and says nothing.
+#
+# It fails closed. An unreadable, empty or unparseable profile is a refusal, and
+# the step proves that before it measures anything: it runs the same two
+# evaluations over deliberately faulty inputs in a temporary directory and
+# refuses to judge the tree at all unless every one of them was caught. The
+# fixtures are built from the lists rather than from package names written out
+# beside them, so the proof keeps covering the lists as they change instead of
+# going stale inside somebody else's pull request.
+#
+# Hardened the same way as every other workflow here: read-only permissions at
+# the top level, every action pinned by commit with a version comment, and
+# checkout without persisted credentials.
+name: Coverage bar
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# Read-only: the job measures and writes nothing back.
+permissions:
+  contents: read
+
+# A newer run on the same ref supersedes an in-flight one. Nothing here
+# publishes, so cancelling a superseded run is safe.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # The check-run name is "Coverage bar" and it is the literal name a required
+  # status check would have to carry. Renaming this job renames the check run
+  # and silently detaches it from any rule that requires it. Issue #25 is where
+  # that rule is asked for.
+  coverage-bar:
+    name: Coverage bar
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          # The floor comes from go.mod rather than from a number written here,
+          # so the toolchain the gate uses cannot drift from the one the module
+          # declares.
+          go-version-file: go.mod
+          cache: false
+
+      - name: Prove the evaluation refuses, then measure the tree
+        env:
+          BAR: "99.5"
+        run: |
+          set -eu
+
+          work=$(mktemp -d)
+          trap 'rm -rf "$work"' EXIT
+
+          # ---- the two lists ------------------------------------------------
+          #
+          # A `#` comment after a package carries why it is outside. Nothing
+          # else in this file decides which packages are gated.
+
+          cat > "$work/surface" <<'LIST'
+          github.com/iderex/stammtisch/internal/orchestration
+          LIST
+
+          cat > "$work/outside" <<'LIST'
+          github.com/iderex/stammtisch                         # the entry point; it wires and decides nothing
+          github.com/iderex/stammtisch/bench                   # a measurement rig, run by hand and never by the server
+          github.com/iderex/stammtisch/bench/cmd/mouth-to-ear  # that rig's command
+          github.com/iderex/stammtisch/botapi                  # the published surface, no code in it yet
+          github.com/iderex/stammtisch/internal/media          # the media plane port, no code in it yet
+          LIST
+
+          # Drops comments and blank lines. awk rather than grep, because grep
+          # over an empty list exits non-zero and would abort the run under
+          # `set -e` for a reason that is not a failure.
+          strip() {
+            awk '{ sub(/#.*/, ""); gsub(/[ \t]/, ""); if ($0 != "") print }' "$1" | sort -u
+          }
+
+          # Per-package coverage out of a profile: one "package percent
+          # statements" line each, plus a TOTAL line. The profile is read
+          # directly rather than through `go tool cover`, so this job depends on
+          # the file format and not on the wording of a report. A package whose
+          # blocks carry no statements at all reports zero rather than dividing
+          # by zero, which is what lets the caller refuse it by name.
+          per_package() {
+            awk -F: '
+              NR > 1 && NF >= 2 {
+                n = split($1, part, "/")
+                dir = part[1]
+                for (i = 2; i < n; i++) dir = dir "/" part[i]
+                split($2, f, " ")
+                total[dir] += f[2]
+                if (f[3] + 0 > 0) covered[dir] += f[2]
+                alltotal += f[2]
+                if (f[3] + 0 > 0) allcovered += f[2]
+              }
+              END {
+                for (d in total) {
+                  if (total[d] > 0) printf "%s %.1f %d\n", d, 100 * covered[d] / total[d], total[d]
+                  else printf "%s 0.0 0\n", d
+                }
+                if (alltotal > 0) printf "TOTAL %.1f %d\n", 100 * allcovered / alltotal, alltotal
+              }
+            ' "$1" | sort
+          }
+
+          # judge <profile> <bar> <surface-list>. Prints every refusal and
+          # returns 1 if there was one. The surface list is a parameter so the
+          # proof below can hand it lists of its own.
+          judge() {
+            judge_profile=$1
+            judge_bar=$2
+            judge_surface=$3
+            judge_bad=0
+
+            if [ ! -s "$judge_profile" ]; then
+              echo "REFUSED: the coverage profile is missing or empty, and an absent report is not a clean one"
+              return 1
+            fi
+            if ! head -n 1 "$judge_profile" | grep -q '^mode: '; then
+              echo "REFUSED: the coverage profile has no mode line, so it is not a profile this job can read"
+              return 1
+            fi
+
+            per_package "$judge_profile" > "$work/figures"
+            if [ ! -s "$work/figures" ]; then
+              echo "REFUSED: the coverage profile parsed to no packages at all"
+              return 1
+            fi
+
+            strip "$judge_surface" > "$work/j-surface"
+            while read -r pkg; do
+              line=$(awk -v p="$pkg" '$1 == p { print; exit }' "$work/figures")
+              if [ -z "$line" ]; then
+                echo "REFUSED: $pkg is on the security surface and the profile carries no statement for it"
+                judge_bad=1
+                continue
+              fi
+              pct=$(printf '%s' "$line" | cut -d' ' -f2)
+              stmts=$(printf '%s' "$line" | cut -d' ' -f3)
+              if [ "$stmts" -eq 0 ]; then
+                echo "REFUSED: $pkg is on the security surface and has no statements to cover"
+                judge_bad=1
+                continue
+              fi
+              if awk -v a="$pct" -v b="$judge_bar" 'BEGIN { exit !(a + 0 < b + 0) }'; then
+                echo "REFUSED: $pkg is at ${pct}% and the bar is ${judge_bar}%"
+                judge_bad=1
+              else
+                echo "ok    $pkg at ${pct}% against a bar of ${judge_bar}%"
+              fi
+            done < "$work/j-surface"
+
+            return "$judge_bad"
+          }
+
+          # classify <packages> <surface-list> <outside-list>. Refuses a package
+          # that is in neither list, one that is in both, and a list naming a
+          # package the module does not hold.
+          classify() {
+            classify_bad=0
+            strip "$2" > "$work/c-surface"
+            strip "$3" > "$work/c-outside"
+            sort -u "$1" > "$work/c-actual"
+
+            while read -r pkg; do
+              in_s=$(grep -Fxc "$pkg" "$work/c-surface" || true)
+              in_o=$(grep -Fxc "$pkg" "$work/c-outside" || true)
+              if [ "$in_s" -eq 0 ] && [ "$in_o" -eq 0 ]; then
+                echo "REFUSED: $pkg is in neither list, so nothing here says whether it decides a security outcome"
+                classify_bad=1
+              elif [ "$in_s" -gt 0 ] && [ "$in_o" -gt 0 ]; then
+                echo "REFUSED: $pkg is on the security surface and outside it at the same time"
+                classify_bad=1
+              fi
+            done < "$work/c-actual"
+
+            cat "$work/c-surface" "$work/c-outside" | while read -r pkg; do
+              grep -Fqx "$pkg" "$work/c-actual" || echo "$pkg"
+            done > "$work/c-dangling"
+            if [ -s "$work/c-dangling" ]; then
+              sed 's|^|REFUSED: a list names a package this module does not hold: |' "$work/c-dangling"
+              classify_bad=1
+            fi
+
+            return "$classify_bad"
+          }
+
+          # ---- the proof, run before the tree is judged ---------------------
+          #
+          # Every fixture below is generated from the two lists rather than
+          # written out against the packages on them today. A fixture naming a
+          # fixed package stops covering the list the moment a package is added
+          # to it, and the way that fails is the worst kind: the proof reds
+          # inside somebody else's change, for a reason their change is not
+          # about, and the cheapest way out is to weaken the fixture.
+
+          mkdir "$work/fx"
+
+          : > "$work/fx/empty"
+          printf 'mode: atomic\n' > "$work/fx/modeonly"
+          printf 'not a profile at all\n' > "$work/fx/garbage"
+
+          # Both statement counts below are derived from the bar rather than
+          # written out beside it, so raising the bar moves the fixtures with it
+          # instead of reding a proof for a reason the change is not about.
+          below_covered=$(awk -v b="$BAR" 'BEGIN { printf "%d", b * 1000 / 2 }')
+          below_missed=$((100000 - below_covered))
+          above_missed=$(awk -v b="$BAR" 'BEGIN { printf "%d", (100 - b) * 1000 }')
+          above_covered=$((100000 - above_missed))
+
+          # Every surface package at half the bar.
+          printf 'mode: atomic\n' > "$work/fx/below"
+          strip "$work/surface" | while read -r pkg; do
+            printf '%s/fixture.go:1.1,2.2 %s 1\n%s/fixture.go:3.1,4.2 %s 0\n' \
+              "$pkg" "$below_covered" "$pkg" "$below_missed"
+          done >> "$work/fx/below"
+
+          # Every surface package exactly on the bar and not a statement above
+          # it, so this leg is a near miss rather than a package with nothing to
+          # fail on. One more uncovered statement here reds it.
+          printf 'mode: atomic\n' > "$work/fx/above"
+          strip "$work/surface" | while read -r pkg; do
+            printf '%s/fixture.go:1.1,2.2 %s 1\n%s/fixture.go:3.1,4.2 %s 0\n' \
+              "$pkg" "$above_covered" "$pkg" "$above_missed"
+          done >> "$work/fx/above"
+
+          # Every surface package present and carrying no statements, which is
+          # the shape a package of declarations produces.
+          printf 'mode: atomic\n' > "$work/fx/nostatements"
+          strip "$work/surface" | while read -r pkg; do
+            printf '%s/fixture.go:1.1,2.2 0 0\n' "$pkg"
+          done >> "$work/fx/nostatements"
+
+          # A profile carrying no surface package at all, which is what a
+          # package with no test files produces: `go test` reports it as having
+          # none and writes not one of its blocks into the profile. The package
+          # named here is one this module cannot hold, so the fixture cannot be
+          # quietly satisfied by a future surface list.
+          {
+            printf 'mode: atomic\n'
+            printf 'example.invalid/not-in-this-module/x.go:1.1,2.2 10 1\n'
+          } > "$work/fx/absent"
+
+          proof_failures=0
+
+          expect_judge() {
+            want=$1
+            fixture=$2
+            what=$3
+            if judge "$work/fx/$fixture" "$BAR" "$work/surface" > "$work/proof.log" 2>&1; then
+              got=accepted
+            else
+              got=refused
+            fi
+            if [ "$got" = "$want" ]; then
+              printf 'proved %s: %s\n' "$want" "$what"
+            else
+              printf 'PROOF FAILED: the %s profile was %s, and it is %s\n' "$fixture" "$got" "$what"
+              sed 's/^/    /' "$work/proof.log"
+              proof_failures=1
+            fi
+          }
+
+          expect_judge refused  empty        "an empty profile"
+          expect_judge refused  garbage      "bytes that are not a profile"
+          expect_judge refused  modeonly     "a profile carrying only its mode line"
+          expect_judge refused  below        "a surface package at half the bar"
+          expect_judge refused  nostatements "a surface package with no statements to cover"
+          expect_judge refused  absent       "a surface package with no block in the profile, which is what a package with no test files produces"
+          expect_judge accepted above        "a surface package exactly on the bar"
+
+          # The classification half, proved the same way. Its fixtures are the
+          # two lists themselves, so what is proved is the rule and not a
+          # package name.
+          { strip "$work/surface"; strip "$work/outside"; } | sort -u > "$work/fx/pkgs-exact"
+          strip "$work/surface" > "$work/fx/pkgs-surface"
+
+          {
+            cat "$work/fx/pkgs-exact"
+            printf 'github.com/iderex/stammtisch/internal/newthing\n'
+          } > "$work/fx/pkgs-unclassified"
+
+          # One line short of the module the lists describe.
+          tail -n +2 "$work/fx/pkgs-exact" > "$work/fx/pkgs-short"
+
+          expect_classify() {
+            want=$1
+            pkgs=$2
+            surface=$3
+            outside=$4
+            what=$5
+            if classify "$work/fx/$pkgs" "$surface" "$outside" > "$work/proof.log" 2>&1; then
+              got=accepted
+            else
+              got=refused
+            fi
+            if [ "$got" = "$want" ]; then
+              printf 'proved %s: %s\n' "$want" "$what"
+            else
+              printf 'PROOF FAILED: the %s package list was %s, and it is %s\n' "$pkgs" "$got" "$what"
+              sed 's/^/    /' "$work/proof.log"
+              proof_failures=1
+            fi
+          }
+
+          expect_classify refused pkgs-unclassified "$work/surface" "$work/outside" \
+            "a package in neither list"
+          expect_classify refused pkgs-short "$work/surface" "$work/outside" \
+            "a list naming a package the module does not hold"
+          expect_classify refused pkgs-surface "$work/surface" "$work/surface" \
+            "a package named by both lists at once"
+          expect_classify accepted pkgs-exact "$work/surface" "$work/outside" \
+            "a module whose packages are each in exactly one list"
+
+          if [ "$proof_failures" -ne 0 ]; then
+            echo "REFUSED: the evaluation did not prove it can say no, so the tree is not judged"
+            exit 1
+          fi
+
+          # ---- the tree -----------------------------------------------------
+
+          echo
+          echo "measuring"
+          go list ./... > "$work/packages"
+          go test ./... -covermode=atomic -coverprofile="$work/cover.out"
+
+          echo
+          failed=0
+          classify "$work/packages" "$work/surface" "$work/outside" || failed=1
+          judge "$work/cover.out" "$BAR" "$work/surface" || failed=1
+
+          per_package "$work/cover.out" > "$work/figures-tree"
+          whole=$(awk '$1 == "TOTAL" { print $2 }' "$work/figures-tree")
+
+          echo
+          echo "every package, gated and not:"
+          while read -r pkg pct stmts; do
+            printf '  %-55s %5s%%  %s statements\n' "$pkg" "$pct" "$stmts"
+          done < "$work/figures-tree"
+
+          {
+            echo "## Coverage"
+            echo
+            echo "The bar is ${BAR}% and it applies to the security surface only."
+            echo
+            echo "Security surface:"
+            echo
+            strip "$work/surface" | while read -r pkg; do
+              pct=$(awk -v p="$pkg" '$1 == p { print $2; exit }' "$work/figures-tree")
+              echo "- \`$pkg\` at ${pct:-no}%"
+            done
+            echo
+            echo "Whole tree: ${whole:-no}%, reported and not gated."
+            echo
+            echo '```'
+            cat "$work/figures-tree"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          exit "$failed"
