@@ -29,8 +29,19 @@ type Serve func(*signalling.Conn)
 // the error is not wrapped or reported anywhere here. There is one response and
 // the library has already written it, and a second one written from this
 // function would be a header written after the body.
-func Handler(serve Serve) http.Handler {
+//
+// A request that did not arrive over a connection transit says is confidential
+// is refused before any of that, so no handshake is completed and no connection
+// is made for it. transit has no default because a caller that forgot it would
+// get the arrangement this refusal exists against, and 403 rather than a
+// redirect because the client is opening a socket and has nowhere to be sent.
+func Handler(serve Serve, transit Transit) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !transit.confidential(r) {
+			http.Error(w, "this connection is not confidential", http.StatusForbidden)
+			return
+		}
+
 		ws, err := websocket.Accept(w, r, &websocket.AcceptOptions{})
 		if err != nil {
 			return

@@ -3,13 +3,22 @@
 # Copyright (C) 2026  iderex
 #
 # Refuses a tracked source file whose first two lines are not the licence
-# header, and refuses a tracked file it cannot classify as source or as text.
+# header for the arm that covers it, and refuses a tracked file it cannot
+# classify as source or as text.
 #
-# The second half is the one that matters over time. A header rule that only
+# The classifier half is the one that matters over time. A header rule that only
 # looks at the file types the tree happens to hold today stops covering the
 # tree on the day somebody adds a language, and nothing says so. Here an
 # extension this script does not name is a refusal asking to be classified,
 # so a second toolchain arriving cannot arrive quietly.
+#
+# The arm half is the same shape one level up. This repository carries two
+# licences, and which one a file is under is a property of where it sits. A
+# check that admitted either identifier anywhere would let the server's arm
+# spread into the surface third parties write against, and let the permissive
+# arm spread out of it, which is the direction that cannot be taken back once
+# somebody has built on it. So the expected identifier is decided per path and
+# the other one is refused by name.
 #
 # It proves itself before it judges anything. The self-test builds fixtures in
 # a temporary directory, runs the same scan over them, and refuses unless every
@@ -20,8 +29,33 @@
 
 set -eu
 
-SPDX='SPDX-License-Identifier: AGPL-3.0-or-later'
+SPDX_DEFAULT='SPDX-License-Identifier: AGPL-3.0-or-later'
+SPDX_APACHE='SPDX-License-Identifier: Apache-2.0'
 COPY='Copyright (C) 2026  iderex'
+
+# The paths under the second arm, as a list this script reads rather than as a
+# sentence in a document that nothing compares against the tree. Each entry is a
+# prefix and everything under it takes Apache-2.0; every path not matched by an
+# entry takes the repository's own arm.
+#
+# Adding a surface is adding an entry here. The proof block below derives a
+# fixture pair from every entry, so an entry that is added and then never
+# exercised is not a thing this list can hold: an arm that cannot be shown to
+# bite in both directions reds the run before the tree is read.
+APACHE_PATHS='botapi/'
+
+# The identifier a file at this path has to carry.
+spdx_for() {
+	for spdx_arm in $APACHE_PATHS; do
+		case "$1" in
+		"$spdx_arm"*)
+			printf '%s' "$SPDX_APACHE"
+			return 0
+			;;
+		esac
+	done
+	printf '%s' "$SPDX_DEFAULT"
+}
 
 # The comment prefix per source language. An extension absent from here is not
 # a source file as far as this script is concerned, which is what classify()
@@ -80,14 +114,16 @@ scan() {
 		[ "$scan_class" = source ] || continue
 
 		scan_prefix=$(prefix_for "$scan_file")
+		scan_spdx=$(spdx_for "$scan_file")
 		scan_first=1
 		# A shebang keeps the first line and the header follows it.
 		case $(line_at "$scan_file" 1) in
 		'#!'*) scan_first=2 ;;
 		esac
 
-		if [ "$(line_at "$scan_file" "$scan_first")" != "$scan_prefix $SPDX" ]; then
-			printf 'no licence identifier on line %s: %s\n' "$scan_first" "$scan_file"
+		if [ "$(line_at "$scan_file" "$scan_first")" != "$scan_prefix $scan_spdx" ]; then
+			printf 'line %s is not "%s %s", which is the arm this path is under: %s\n' \
+				"$scan_first" "$scan_prefix" "$scan_spdx" "$scan_file"
 			scan_bad=1
 			continue
 		fi
@@ -114,8 +150,8 @@ proof_scan() (
 	cd "$work" && scan "$@"
 )
 
-printf '%s\n' "// $SPDX" "// $COPY" '' 'package fixture' >"$work/good.go"
-printf '%s\n' '#!/bin/sh' "# $SPDX" "# $COPY" >"$work/good.sh"
+printf '%s\n' "// $SPDX_DEFAULT" "// $COPY" '' 'package fixture' >"$work/good.go"
+printf '%s\n' '#!/bin/sh' "# $SPDX_DEFAULT" "# $COPY" >"$work/good.sh"
 # Named files, at the root and under a directory. Both directions are load
 # bearing: a repair written as `*/.gitignore` fixes the subdirectory case and
 # drops the root one, and nothing else in this block would notice.
@@ -130,7 +166,7 @@ printf '%s\n' 'package fixture' >"$work/absent.go"
 # The one-character-class mistake: the identifier of the licence without its
 # "or later" arm, which is a different licence and reads identical at a glance.
 printf '%s\n' '// SPDX-License-Identifier: AGPL-3.0' "// $COPY" >"$work/nearmiss.go"
-printf '%s\n' "// $COPY" "// $SPDX" >"$work/swapped.go"
+printf '%s\n' "// $COPY" "// $SPDX_DEFAULT" >"$work/swapped.go"
 printf '%s\n' '#!/bin/sh' "# $COPY" >"$work/shebang-then-nothing.sh"
 printf '%s\n' 'fn main() {}' >"$work/unknown.rs"
 # An unnamed extension has to stay refused under a directory too, or the
@@ -142,8 +178,26 @@ printf '%s\n' 'fn main() {}' >"$work/sub/unknown.rs"
 printf '%s\n' '*.json' >"$work/sub/backup.gitignore"
 printf '%s\n' 'an exception' >"$work/notes/LICENSE-EXCEPTIONS"
 
+# The permissive identifier where nothing grants it. This is the mistake a
+# person makes by copying a header out of the surface they were just reading,
+# and it relicenses a file of the server by two words.
+printf '%s\n' "// $SPDX_APACHE" "// $COPY" >"$work/wrong-arm-outside.go"
+
 clean_fixtures='good.go good.sh .gitignore sub/.gitignore sub/.gitattributes sub/LICENSE sub/NOTICE sub/DCO'
-faulty_fixtures='absent.go nearmiss.go swapped.go shebang-then-nothing.sh unknown.rs sub/unknown.rs sub/backup.gitignore notes/LICENSE-EXCEPTIONS'
+faulty_fixtures='absent.go nearmiss.go swapped.go shebang-then-nothing.sh unknown.rs sub/unknown.rs sub/backup.gitignore notes/LICENSE-EXCEPTIONS wrong-arm-outside.go'
+
+# A pair per entry in the arm list, derived from the list rather than written
+# beside it, so an arm added without a proof is not a state this script has. The
+# two files differ in one identifier and in nothing else, which is the whole
+# near miss: a file under the surface carrying the server's arm is what happens
+# when somebody adds a file the ordinary way.
+for arm in $APACHE_PATHS; do
+	mkdir -p "$work/$arm"
+	printf '%s\n' "// $SPDX_APACHE" "// $COPY" '' 'package fixture' >"$work/${arm}right-arm.go"
+	printf '%s\n' "// $SPDX_DEFAULT" "// $COPY" '' 'package fixture' >"$work/${arm}wrong-arm.go"
+	clean_fixtures="$clean_fixtures ${arm}right-arm.go"
+	faulty_fixtures="$faulty_fixtures ${arm}wrong-arm.go"
+done
 
 proof_failures=0
 clean_count=0

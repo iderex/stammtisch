@@ -18,8 +18,16 @@ depends on it exists.
 
 See [NOTICE.md](NOTICE.md) for the intended-use notice.
 
-See [LICENSE](LICENSE) for the terms, the GNU Affero General Public
-License version 3.
+See [LICENSE](LICENSE) for the terms of the server, which is this repository
+apart from the paths named below: the GNU Affero General Public License version
+3 or later.
+
+The surfaces a third party writes against are under the Apache License 2.0
+instead, so that a bot or a client is not put under the server's terms by the
+act of talking to it. That is [botapi/](botapi/) today, with its terms in
+[botapi/LICENSE](botapi/LICENSE). Which paths those are is a list a check reads,
+in [.github/check-licence-headers.sh](.github/check-licence-headers.sh), and the
+check refuses a file carrying the identifier of the arm it is not under.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for how a change gets in, and which of
 the rules there anything actually refuses.
