@@ -29,6 +29,14 @@ under this one when it lands. Keeping them apart from everything that uses them
 is what lets a reviewer see at a glance whether the orchestration layer reached
 around the port.
 
+`internal/store/` holds the persistence port and, beside it, its
+implementations, which is the arrangement `internal/media/` uses one directory
+along. The port and the in-memory implementation are the package itself and
+carry no driver, so the orchestration suite can hold a real store without a
+database, a file or a build tag. The durable implementation is
+`internal/store/sqlite/` and is the only package in this tree that imports a
+database driver. Which store, and the means check behind it, is issue #27.
+
 `botapi/` holds the bot API surface. It sits outside `internal/` because it is a
 public contract that third parties write against, and it is its own package so
 its diff is readable on its own. The contract itself is issue #50 and is not in
@@ -57,7 +65,7 @@ The entry point is still `main.go` at the module root. It belongs under a
 the same job as deciding where it goes and the move has its own issue. Until
 then the root package is part of the artefact and is named as such above.
 
-## The seam that is enforced
+## The seams that are enforced
 
 The orchestration layer must not import the media plane. That is the property
 that keeps the unit suite fast and headless, and it is the first thing that
@@ -79,6 +87,22 @@ Run it yourself:
 The test fails closed. If the toolchain cannot be run, or if the graph comes
 back without the orchestration package in it, the test fails rather than passing
 on an empty answer.
+
+The same layer must not import the durable store or the driver under it, and
+`TestOrchestrationDoesNotReachADatabaseDriver` in
+`internal/orchestration/store_seam_test.go` refuses that the same way, off the
+same graph. It asserts the port is present before it asserts the two absences,
+so an absence cannot be read out of a graph that carries no store at all:
+
+    go list -deps -test ./internal/orchestration/... | grep 'internal/store'
+    github.com/iderex/stammtisch/internal/store
+
+    go list -deps -test ./internal/orchestration/... | grep 'modernc.org/sqlite'
+    (no output)
+
+The port is importable there and the implementation is not. That is what lets
+the orchestration suite run against a real store on a runner with nothing
+installed.
 
 ## What this does not settle
 

@@ -54,6 +54,25 @@
 # belongs where the decoder it feeds already is. It arrived with the rest of #30
 # and measured 100.0 percent.
 #
+# internal/store and internal/store/sqlite are on the surface for the same kind
+# of reason, from the other end. Neither decides a permission: the one function
+# that does is orchestration.Allow. What they do is answer it. A store that
+# returned a grant nobody wrote, or dropped one somebody did, moves the decision
+# without touching the code that makes it, and a caller cannot tell that from a
+# correct answer. Both arrived with #27 and both measured 100.0 percent, over 92
+# and 169 statements:
+#
+#     go test ./... -covermode=atomic -coverprofile=cover.out
+#     go tool cover -func=cover.out | grep 'internal/store'
+#
+# The durable one carries the only database driver in the tree, which is what
+# made the bar worth arguing about rather than assuming. A package whose error
+# paths are a driver's is a package where the last half percent is the part
+# nobody writes, so it is the part the bar is for. The refusals it needed
+# reaching are in internal/store/sqlite/migrate_internal_test.go, which is
+# inside the package because a driver name Open never passes and a migration
+# history the tree does not carry are not reachable from outside it.
+#
 # It fails closed. An unreadable, empty or unparseable profile is a refusal, and
 # the step proves that before it measures anything: it runs the same two
 # evaluations over deliberately faulty inputs in a temporary directory and
@@ -124,6 +143,8 @@ jobs:
           github.com/iderex/stammtisch/internal/auth
           github.com/iderex/stammtisch/internal/orchestration
           github.com/iderex/stammtisch/internal/signalling
+          github.com/iderex/stammtisch/internal/store
+          github.com/iderex/stammtisch/internal/store/sqlite
           github.com/iderex/stammtisch/internal/transport
           LIST
 
