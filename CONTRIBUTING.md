@@ -87,11 +87,34 @@ on your machine. Some of them have local equivalents you can run yourself: the
 sign-off loop above, the Unicode scan below, and the licence header scan, which
 is the same script the workflow runs. The rest run on GitHub or not at all.
 
-`NOT ENFORCED`, issue #25. Not one of them is a required status check, whatever
-their number is on the day you read this, so a red check does not by itself block
-a merge. The `types` list in the ruleset output above is where you can see that
-for yourself: it carries no `required_status_checks` entry. Wait for the checks
-and merge on green anyway.
+REFUSED BY THE RULESET, for most of them. It carries a
+`required_status_checks` rule and the contexts on it have to be green before the
+forge will merge, with no bypass actors, so this applies to whoever owns the
+repository as well. Read the list rather than trusting a count here, because a
+name goes on it as each check starts reporting and this paragraph cannot tell
+you when one has:
+
+    gh api repos/iderex/stammtisch/rulesets/20482339 --jq '[.rules[] | select(.type == "required_status_checks") | .parameters.required_status_checks[] | .context] | sort | .[]'
+
+Each entry also pins the app that may satisfy it, so a check run of the right
+name from another app does not count. `CodeQL` is why: the job and the
+code-scanning result share one name, and only the job is required.
+
+    gh api repos/iderex/stammtisch/rulesets/20482339 --jq '[.rules[] | select(.type == "required_status_checks") | .parameters.required_status_checks[] | .integration_id] | unique'
+
+`NOT ENFORCED` for the rest, and the rest is not nothing. A workflow that runs
+on a schedule and never on a pull request cannot be required, because a name
+that never reports would block every merge, so those stay advisory by
+construction. Which ones those are is readable in the `on:` block of each file
+and nowhere else. Compare the two lists yourself rather than assuming they
+match:
+
+    ls .github/workflows/
+    gh pr checks <number>
+
+A branch does not have to be up to date with the default branch before it
+merges. `strict_required_status_checks_policy` is false, so a green run on a
+head cut from an older base still counts.
 
 ## Unicode
 
