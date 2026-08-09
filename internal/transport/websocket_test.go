@@ -25,6 +25,11 @@ import (
 // is the same property internal/signalling has for the framing, kept one layer
 // further out.
 
+// Every handler below is built with transport.TLSTerminatedAhead, which is what
+// a test about framing or about Origin says when confidentiality is not the
+// thing it is asserting. The requirement itself, and the arrangement it
+// refuses, are in confidentiality_test.go.
+
 // dialTimeout bounds every exchange below. net.Pipe has no buffer and no
 // deadline of its own, so a test that got the handshake wrong would otherwise
 // hang until the package timeout rather than say what it was waiting for.
@@ -175,7 +180,7 @@ func TestAFrameSentByAPeerArrivesThroughTheTransport(t *testing.T) {
 		if err := conn.WriteFrame(signalling.Frame{Kind: signalling.KindSpaceState, Payload: []byte("back")}); err != nil {
 			t.Errorf("writing the reply: %v", err)
 		}
-	}))
+	}, transport.TLSTerminatedAhead))
 
 	peer, err := dial(t, client, nil)
 	if err != nil {
@@ -220,7 +225,7 @@ func TestAPeerThatHasProvedNothingIsRefusedThroughTheTransport(t *testing.T) {
 	client := serveInMemory(t, transport.Handler(func(conn *signalling.Conn) {
 		_, err := conn.ReadFrame()
 		refusal <- err
-	}))
+	}, transport.TLSTerminatedAhead))
 
 	peer, err := dial(t, client, nil)
 	if err != nil {
@@ -246,7 +251,7 @@ func TestTheFrameBoundIsRefusedThroughTheTransport(t *testing.T) {
 	client := serveInMemory(t, transport.Handler(func(conn *signalling.Conn) {
 		_, err := conn.ReadFrame()
 		verdict <- err
-	}))
+	}, transport.TLSTerminatedAhead))
 
 	peer, err := dial(t, client, nil)
 	if err != nil {
@@ -290,7 +295,7 @@ func TestOneMessageMayCarryMoreThanOneFrameAndMoreBytesThanTheBound(t *testing.T
 			read = append(read, f.Kind)
 		}
 		kinds <- read
-	}))
+	}, transport.TLSTerminatedAhead))
 
 	peer, err := dial(t, client, nil)
 	if err != nil {
@@ -326,7 +331,7 @@ func TestARequestThatIsNotAHandshakeNeverReachesServe(t *testing.T) {
 	served := make(chan struct{}, 1)
 	client := serveInMemory(t, transport.Handler(func(*signalling.Conn) {
 		served <- struct{}{}
-	}))
+	}, transport.TLSTerminatedAhead))
 
 	ctx, cancel := context.WithTimeout(context.Background(), dialTimeout)
 	defer cancel()
@@ -360,7 +365,7 @@ func TestARequestFromAnotherOriginIsRefused(t *testing.T) {
 	served := make(chan struct{}, 1)
 	client := serveInMemory(t, transport.Handler(func(*signalling.Conn) {
 		served <- struct{}{}
-	}))
+	}, transport.TLSTerminatedAhead))
 
 	_, err := dial(t, client, http.Header{"Origin": []string{"http://elsewhere.invalid"}})
 	if err == nil {
@@ -383,7 +388,7 @@ func TestTheSameHostOriginIsAccepted(t *testing.T) {
 	served := make(chan struct{}, 1)
 	client := serveInMemory(t, transport.Handler(func(*signalling.Conn) {
 		served <- struct{}{}
-	}))
+	}, transport.TLSTerminatedAhead))
 
 	if _, err := dial(t, client, http.Header{"Origin": []string{"http://stammtisch.invalid"}}); err != nil {
 		t.Fatalf("a handshake from the request's own host was refused: %v", err)
