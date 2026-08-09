@@ -192,11 +192,24 @@ func TestARequestOverTLSReachesServe(t *testing.T) {
 		served <- struct{}{}
 	}, transport.TLSHere))
 
-	if _, err := dialSecure(t, client); err != nil {
+	peer, err := dialSecure(t, client)
+	if err != nil {
 		t.Fatalf("a handshake over TLS was refused: %v", err)
 	}
 
 	read(t, served, "serve being reached by a handshake over TLS")
+
+	// Read until the server has gone. serve returns as soon as it has been
+	// reached, and the connection is closed behind it, which over TLS means an
+	// alert written on the way out. Nothing consumes that on an unbuffered pipe
+	// unless this end is reading, and a test that does not read spends five
+	// seconds in the library's close timeout waiting for an assertion that has
+	// already been made.
+	ctx, cancel := context.WithTimeout(context.Background(), dialTimeout)
+	defer cancel()
+	if _, _, err := peer.Read(ctx); err == nil {
+		t.Fatal("the connection carried a message after serve returned")
+	}
 }
 
 // TestTLSTerminatedAheadAdmitsARequestThatDidNotArriveOverTLS is the declared
