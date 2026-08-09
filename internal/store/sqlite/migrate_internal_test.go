@@ -179,7 +179,7 @@ func TestAnIdentifierColumnThatIsNotTextIsRefused(t *testing.T) {
 	if err := read.Scan("ada@example.test"); err != nil {
 		t.Fatalf("Scan of a valid identifier: %v", err)
 	}
-	if read.ID.Local() != "ada" || read.ID.Host() != "example.test" {
+	if read.Local() != "ada" || read.Host() != "example.test" {
 		t.Errorf("Scan read %s", read.ID)
 	}
 }
