@@ -8,13 +8,23 @@
 # generator that broke three months ago is not discovered on the day it is
 # needed.
 #
-# What the document describes is what SHIPS. The generator walks the packages the
-# build actually reaches and the modules that supply them, so a module that sits
-# in the module graph without any built package importing it is absent, and so is
-# a dependency used only by tests. That is the right set for the question this
-# artifact exists to answer, and it is a narrower set than either `go list -m
-# all` or `go.sum` carries. The two reconciliation steps below are written
-# against that fact rather than around it.
+# What the document describes is every module that supplies a package this module
+# imports IN ANY BUILD CONFIGURATION. A module that sits in the graph without any
+# package importing it is absent, and so is a dependency used only by tests, so
+# the set is narrower than either `go list -m all` or `go.sum` carries. It is
+# wider than one platform's build, and that width is deliberate: a dependency
+# whose imports are guarded by a build constraint ships in the binary for the
+# platform that reaches it, and a document written from the runner's own build
+# would omit it and say nothing. Erring towards a module an operator's binary
+# does not contain costs them a vulnerability report to dismiss; erring the other
+# way costs them one they never see.
+#
+# The price is that the document does not on its own say which platform's binary
+# contains what. A release artifact per platform needs a document per platform,
+# and that belongs to the release workflow rather than to this one.
+#
+# The reconciliation below is written against that set rather than around it, and
+# it proves itself on fixtures before it reads the tree.
 #
 # Hardened the same way as every other workflow here: read-only permissions at
 # the top level, every action pinned by commit with a version comment, and
@@ -110,27 +120,157 @@ jobs:
           echo "Subject: $(jq -r '.metadata.component.name' sbom.cdx.json)"
           echo "Library components: $(jq -r '[.components // [] | .[] | select(.type == "library")] | length' sbom.cdx.json)"
 
-      - name: Reconcile against the module graph the build reaches
+      - name: Reconcile the document, having first proved the reconciliation
         run: |
           set -euo pipefail
-          # The transitive set, not the direct one. `go list -deps` expands the
-          # import graph of every package in the module and prints the module
-          # supplying each, so a dependency four levels down appears here exactly
-          # as it appears in the document. `awk NF` rather than `grep -v` drops
-          # the blank lines the template emits for standard-library packages: awk
-          # exits 0 on empty input and grep exits 1, and under `pipefail` an
-          # empty set would otherwise be read as a broken pipeline.
-          go list -deps -f '{{with .Module}}{{if not .Main}}{{.Path}}@{{.Version}}{{end}}{{end}}' ./... \
-            | awk 'NF' | sort -u > expected-modules.txt
-          jq -r '[.components // [] | .[] | select(.type == "library") | "\(.name)@\(.version)"] | sort | .[]' \
-            sbom.cdx.json | sort -u > documented-modules.txt
-          echo "reached by the build: $(wc -l < expected-modules.txt)"
-          echo "in the document:      $(wc -l < documented-modules.txt)"
-          if ! diff -u expected-modules.txt documented-modules.txt; then
-            echo "::error::The document and the module graph disagree. A line prefixed '-' is a module the build reaches and the document omits; a line prefixed '+' is a module the document claims and the build does not reach."
+          # Two assertions, because one of them alone was wrong for a year and
+          # nobody could see it. Until this repository took a dependency whose
+          # imports are guarded by a build constraint, every module in the tree
+          # was reached on every platform, so a comparison against the runner's
+          # own build agreed with the document by coincidence. The first such
+          # dependency turned that coincidence into a red required check with no
+          # defect behind it, and the manifest, the generator and the tidy state
+          # were all correct.
+          #
+          # First: every module THIS platform's build reaches is in the document.
+          # A module in the binary and not in the document is the failure an
+          # operator pays for, so it is refused outright.
+          #
+          # Second: the document names exactly the modules the manifest requires.
+          # `go mod tidy` writes the requirement set from the imports of every
+          # build configuration, which is the same question the generator asks,
+          # so the two are equal for a tidy manifest and neither is derived from
+          # the other. The generator drops a requirement nothing imports on any
+          # platform, which is what makes this comparison worth making rather
+          # than a restatement of the manifest.
+          #
+          # That second assertion is sound only while the manifest is tidy, and
+          # it is: `go mod tidy -diff` runs in the dependency-lock workflow
+          # beside `.github/check-dependency-lock.sh`. A `replace` directive
+          # breaks it in a different way, because the manifest then names a
+          # version the document does not, so one is refused here rather than
+          # reasoned about. The same directive is already refused by that script,
+          # for its own reasons.
+          #
+          # The surplus - documented and not reached here - is printed and is not
+          # a failure. It is the platform-conditional case this step exists to
+          # stop refusing.
+          reconcile() {
+            dir=$1
+            doc=$2
+            label=$3
+            out=$4
+            work=$(mktemp -d)
+            RECONCILE_UNREACHED=
+            if [ "$(go -C "$dir" mod edit -json | jq -r '[.Replace[]?] | length')" != "0" ]; then
+              echo "${label}: the manifest carries a replace directive, and this comparison cannot read one"
+              return 1
+            fi
+            jq -r '[.components // [] | .[] | select(.type == "library") | "\(.name)@\(.version)"] | sort | .[]' \
+              "$doc" | sort -u > "$out"
+            go -C "$dir" mod edit -json \
+              | jq -r '[.Require[]? | "\(.Path)@\(.Version)"] | sort | .[]' | sort -u > "$work/required.txt"
+            # `awk NF` rather than `grep -v` drops the blank lines the template
+            # emits for standard-library packages: awk exits 0 on empty input
+            # and grep exits 1, and under `pipefail` an empty set would
+            # otherwise be read as a broken pipeline.
+            go -C "$dir" list -deps -f '{{with .Module}}{{if not .Main}}{{.Path}}@{{.Version}}{{end}}{{end}}' ./... \
+              | awk 'NF' | sort -u > "$work/reached.txt"
+            echo "${label}: in the document $(wc -l < "$out"), required by the manifest $(wc -l < "$work/required.txt"), reached by a build here $(wc -l < "$work/reached.txt")"
+            verdict=0
+            missing=$(comm -23 "$work/reached.txt" "$out")
+            if [ -n "$missing" ]; then
+              echo "${label}: reached by this platform's build and absent from the document:"
+              echo "$missing" | sed 's/^/    /'
+              verdict=1
+            fi
+            undeclared=$(comm -13 "$work/required.txt" "$out")
+            if [ -n "$undeclared" ]; then
+              echo "${label}: in the document and not required by the manifest:"
+              echo "$undeclared" | sed 's/^/    /'
+              verdict=1
+            fi
+            undocumented=$(comm -23 "$work/required.txt" "$out")
+            if [ -n "$undocumented" ]; then
+              echo "${label}: required by the manifest and absent from the document:"
+              echo "$undocumented" | sed 's/^/    /'
+              verdict=1
+            fi
+            RECONCILE_UNREACHED=$(comm -13 "$work/reached.txt" "$out")
+            if [ -n "$RECONCILE_UNREACHED" ]; then
+              echo "${label}: in the document and not reached by a build here, which is legitimate:"
+              echo "$RECONCILE_UNREACHED" | sed 's/^/    /'
+            fi
+            return $verdict
+          }
+
+          # The proof. A fixture module in a temporary directory, carrying a
+          # dependency it imports only under `//go:build plan9`. No runner this
+          # job will ever use is plan9, so the module is required, is documented,
+          # and is reached by no build here - which is the shape that broke the
+          # old comparison, reproduced rather than described. It also imports one
+          # module unconditionally, so the fixture has something in both sets.
+          fx=$(mktemp -d)
+          mkdir -p "$fx/conditional"
+          cat > "$fx/conditional/go.mod" <<'FIXTURE'
+          module example.test/conditional
+
+          go 1.26
+          FIXTURE
+          cat > "$fx/conditional/reached.go" <<'FIXTURE'
+          package conditional
+
+          import "golang.org/x/crypto/blake2b"
+
+          const Size = blake2b.Size
+          FIXTURE
+          cat > "$fx/conditional/conditional_plan9.go" <<'FIXTURE'
+          //go:build plan9
+
+          package conditional
+
+          import "github.com/coder/websocket"
+
+          const Status = websocket.StatusNormalClosure
+          FIXTURE
+          go -C "$fx/conditional" mod tidy
+          cyclonedx-gomod mod -json -output "$fx/agrees.json" "$fx/conditional"
+
+          echo "--- fixture 1: a platform-conditional dependency, which must agree ---"
+          if ! reconcile "$fx/conditional" "$fx/agrees.json" "fixture 1" "$fx/agrees.txt"; then
+            echo "::error::PROOF FAILED: the fixture with a platform-conditional dependency was refused. This step would red every tree carrying one, which is the defect it was written to remove."
             exit 1
           fi
-          echo "The document lists exactly the modules the build reaches."
+          if [ -z "$RECONCILE_UNREACHED" ]; then
+            echo "::error::PROOF FAILED: the fixture agreed and carries no module unreached by a build here, so it is not the case this step is about and it proves nothing. Check that the plan9 constraint still keeps the module out of the runner's build."
+            exit 1
+          fi
+
+          # Two refusals, each one component removed from a document that was
+          # correct a moment ago. That is the near miss: a generator release that
+          # stops walking one edge produces exactly this and nothing louder.
+          echo "--- fixture 2: the document drops a module the build here reaches, which must be refused ---"
+          jq 'del(.components[] | select(.name == "golang.org/x/crypto"))' "$fx/agrees.json" > "$fx/drops-reached.json"
+          if reconcile "$fx/conditional" "$fx/drops-reached.json" "fixture 2" "$fx/drops-reached.txt"; then
+            echo "::error::PROOF FAILED: a document omitting a module this platform's build reaches was accepted."
+            exit 1
+          fi
+
+          echo "--- fixture 3: the document drops the platform-conditional module, which must be refused ---"
+          jq 'del(.components[] | select(.name == "github.com/coder/websocket"))' "$fx/agrees.json" > "$fx/drops-conditional.json"
+          if reconcile "$fx/conditional" "$fx/drops-conditional.json" "fixture 3" "$fx/drops-conditional.txt"; then
+            echo "::error::PROOF FAILED: a document omitting a required module that no build here reaches was accepted. Widening the comparison to admit the platform-conditional case has widened it into admitting anything."
+            exit 1
+          fi
+
+          echo "The comparison agreed on the fixture that should agree and refused both that should not."
+
+          echo "--- the tree ---"
+          if ! reconcile . sbom.cdx.json "the tree" documented-modules.txt; then
+            echo "::error::The document and the modules this repository imports disagree. Each line above says which direction, and the fixtures above show the comparison can still say no."
+            exit 1
+          fi
+          echo "The document lists exactly the modules this repository imports, in any build configuration."
 
       - name: Spot check against the lockfile
         run: |
