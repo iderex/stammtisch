@@ -51,6 +51,21 @@
 // TestARequestFromAnotherOriginIsRefused is the proof, and it goes red if
 // InsecureSkipVerify or an OriginPatterns entry is added.
 //
+// # Confidentiality
+//
+// Handler refuses a request that did not arrive over a connection its Transit
+// argument says is confidential, before the handshake and before any connection
+// exists. The default value of that argument is the refusing one, so the
+// arrangement in which a conversation crosses a network in the clear has to be
+// declared by name at the call site rather than reached by leaving something
+// out. docs/decisions/transport-confidentiality.md is where the requirement is
+// argued and where what the declaration cannot check is written down.
+//
+// TestARequestThatDidNotArriveOverTLSIsRefused is the proof, and it asserts on
+// the refused arrangement rather than on the working one. Its neighbour
+// TestARequestOverTLSReachesServe is what stops a guard that refused every
+// request from passing it.
+//
 // # What is not here
 //
 // Nothing in this package listens on a port. Handler returns an http.Handler
