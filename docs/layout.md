@@ -29,6 +29,13 @@ under this one when it lands. Keeping them apart from everything that uses them
 is what lets a reviewer see at a glance whether the orchestration layer reached
 around the port.
 
+`internal/logging/` holds the one surface a log line is written through. It is a
+leaf: it imports nothing else in this module, and
+`TestTheLogSurfaceDependsOnNoOtherPackageInThisModule` refuses a change to that.
+Every package under `internal/` has to be able to log, so a surface that
+imported the domain or the store would be one neither could import back, and the
+first package that needed a line would write its own instead.
+
 `internal/store/` holds the persistence port and, beside it, its
 implementations, which is the arrangement `internal/media/` uses one directory
 along. The port and the in-memory implementation are the package itself and

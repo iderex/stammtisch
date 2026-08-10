@@ -130,9 +130,9 @@ jobs:
           rule: logging-outside-the-log-surface
           paths: internal/
           files: *.go
-          exempt:
+          exempt: internal/logging/logging.go
           pattern: (^|[^[:alnum:]_.])(log|slog)\.[A-Z]|(^|[^[:alnum:]_.])fmt\.(Print|Fprint)|(^|[^[:alnum:]_.])println\(
-          why: a log that carries no conversation content is only checkable where there is one place logs are written. A package printing for itself is a second surface nobody reviewed. Issue #67 builds that surface, and the package it lands in is what goes on this rule's exempt line.
+          why: a log that carries no conversation content is only checkable where there is one place logs are written. A package printing for itself is a second surface nobody reviewed. The exempt file is that surface, from issue #67, and it is one file rather than the package so that a second writer arriving beside it is refused here.
           bites: 	log.Printf("member %s joined %s", m.Name, ch.Name)
           allows: 	return fmt.Errorf("member %s is not in channel %s", m.ID, ch.ID)
           RULES

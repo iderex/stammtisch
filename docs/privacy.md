@@ -135,19 +135,57 @@ dependency on a future day. Nothing here watches for that.
 
 ## Logs
 
-This section cannot yet say what appears in an operator's logs, because nothing
-in the service writes one:
+An operator's logs are the most likely route for a personal communication to
+leave the boundary this document describes, because logs are shipped somewhere
+else by design and nobody reads them on the way past.
 
-    git grep -nE '(^|[^[:alnum:]_.])(log|slog)\.[A-Z]|(^|[^[:alnum:]_.])fmt\.(Print|Fprint)|(^|[^[:alnum:]_.])println\(' -- 'internal/*.go' 'internal/**/*.go' ; echo "exit=$?"
+What stops that here is the shape of one package rather than a rule contributors
+are asked to keep. `internal/logging` is the only place a log line is written,
+and its surface takes a closed set of events and a closed set of fields. Every
+field constructor takes an identifier, a number or a duration, and none of them
+takes a string, so a caller holding a channel name, a display name or a decoded
+payload has nothing to pass it to and the compiler refuses the call.
+
+The field set a line can carry, which is the whole of it:
+
+    git grep -n -A11 'var declaredKeys = ' -- internal/logging/logging.go
+
+Those are identifiers, a protocol version, a count and a duration. What is not
+there is the part worth reading twice: no name, no message, no reason, no free
+text under any spelling. `channel.name`, which the inventory above lists as the
+one column that can be a person's name, has no field to be written into.
+
+An identifier is `local@host`, and `NewIdentifier` admits nothing else: no
+space, no character that does not print, one separator, a bounded length. That
+is what stops free text being turned into an identifier first and logged that
+way. What it does not stop is a value that already has that shape, so a caller
+who deliberately built an identifier out of somebody's words could still log
+them. Nothing in the tree does, and nothing in the tree would refuse it.
+
+That there is one surface rather than several is refused by a machine rather
+than reviewed. The greppable invariants check carries a rule over everything
+under `internal/`, with the one file that writes on its exempt line, so a
+package that starts printing for itself reds the check:
+
+    git grep -n -A2 'rule: logging-outside-the-log-surface' -- .github/workflows/invariants.yml
+
+The suite next to the surface drives a session through signalling, auth and
+orchestration, reads the log it produced, and refuses a field outside the
+declared set:
+
+    go test -count=1 -run TestAFullSessionCarriesNoFieldOutsideTheDeclaredSet ./internal/logging
+
+Now the part this section must not be read as saying. Nothing calls that surface
+yet, because there is no server to call it: the entry point still prints one
+line and exits, and what wires a running service is the configuration model in
+#66 and the endpoints in #69.
+
+    git grep -l '"github.com/iderex/stammtisch/internal/logging"' -- '*.go' ':!internal/logging/*' ; echo "exit=$?"
     exit=1
 
-That is an absence rather than a narrow surface, and the difference matters to
-somebody reading this to answer a question about their logs today. A rule in
-the greppable invariants check already refuses a direct write from anywhere
-under `internal/`, so the one surface issue #67 builds arrives as the only
-place logs are written rather than as one of several. When it lands this
-section names the declared field set and what is impossible to log, and the
-issue's own fourth condition is that the naming happens here.
+Exit 1 is no match. So an operator running this today has no logs at all rather
+than narrow ones, and the paragraphs above describe what a log line will be able
+to carry when something writes one, not what anybody's log holds now.
 
 ## Deletion
 

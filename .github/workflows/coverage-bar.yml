@@ -73,6 +73,17 @@
 # inside the package because a driver name Open never passes and a migration
 # history the tree does not carry are not reachable from outside it.
 #
+# internal/logging is on the surface for a reason that is neither of those. It
+# decides nothing and answers nothing; it is the boundary a personal
+# communication would have to cross to reach an operator's log aggregator, and
+# the thing that stops it is a type discipline whose whole value is in the
+# refusals. A refusal nothing exercises is a refusal that stops working
+# silently, which is the case the bar exists for. It arrived with #67 and
+# measured 100.0 percent over 78 statements:
+#
+#     go test ./... -covermode=atomic -coverprofile=cover.out
+#     go tool cover -func=cover.out | grep 'internal/logging'
+#
 # It fails closed. An unreadable, empty or unparseable profile is a refusal, and
 # the step proves that before it measures anything: it runs the same two
 # evaluations over deliberately faulty inputs in a temporary directory and
@@ -141,6 +152,7 @@ jobs:
 
           cat > "$work/surface" <<'LIST'
           github.com/iderex/stammtisch/internal/auth
+          github.com/iderex/stammtisch/internal/logging
           github.com/iderex/stammtisch/internal/orchestration
           github.com/iderex/stammtisch/internal/signalling
           github.com/iderex/stammtisch/internal/store
