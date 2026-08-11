@@ -4,7 +4,9 @@
 package bench
 
 import (
+	"encoding/json"
 	"math"
+	"strings"
 	"testing"
 	"time"
 )
@@ -195,5 +197,75 @@ func TestCompareP95RefusesADifferenceOutsideTheBound(t *testing.T) {
 	}
 	if r.DeltaMs != 21 {
 		t.Fatalf("delta reported as %v, want 21", r.DeltaMs)
+	}
+}
+
+// The shaping command is the one part of a shaping record a later reader can
+// act on, so it comes back exactly as it was given. A command trimmed,
+// collapsed or re-quoted on the way into the report is a command that no longer
+// reproduces the run it claims to describe.
+func TestADeclaredShapingCommandIsCarriedWordForWord(t *testing.T) {
+	const command = `tc qdisc add dev eth0 root netem delay 30ms  loss 0%`
+	s := DeclaredShaping("30ms-rtt", command)
+	if s.Command != command {
+		t.Fatalf("the command came back as %q, want %q", s.Command, command)
+	}
+	if s.Profile != "30ms-rtt" {
+		t.Fatalf("the profile came back as %q, want %q", s.Profile, "30ms-rtt")
+	}
+}
+
+// An empty command under a named profile and an empty command under no shaping
+// at all look identical in a report, and they are opposite statements: nothing
+// to write down against something nobody wrote down. The record says which.
+func TestANamedProfileWithNoCommandSaysNobodyWroteOneDown(t *testing.T) {
+	s := DeclaredShaping("60ms-rtt-2pc-loss", "")
+	if !strings.Contains(s.Origin, "no command was declared") {
+		t.Fatalf("a shaped profile with no command reported its origin as %q, which does not say the command is missing", s.Origin)
+	}
+}
+
+// The near miss beside the case above. An unshaped run has no command to
+// declare, so saying one is missing would report an absence as a defect and
+// teach a reader to ignore the sentence where it matters.
+func TestAnUnshapedRunIsNotAccusedOfAMissingCommand(t *testing.T) {
+	for _, profile := range []string{"none", ""} {
+		s := DeclaredShaping(profile, "")
+		if strings.Contains(s.Origin, "no command was declared") {
+			t.Fatalf("profile %q reported its origin as %q, and there was no command to declare", profile, s.Origin)
+		}
+		if s.Profile != "none" {
+			t.Fatalf("profile %q came back as %q, want %q", profile, s.Profile, "none")
+		}
+	}
+}
+
+// Carrying the command is not a step towards the rig checking it, and the
+// disclosure survives every combination rather than only the empty one.
+func TestEveryShapingRecordSaysTheRigNeitherAppliedNorVerifiedIt(t *testing.T) {
+	for _, c := range []struct{ profile, command string }{
+		{"none", ""},
+		{"", ""},
+		{"30ms-rtt", ""},
+		{"30ms-rtt", "tc qdisc add dev eth0 root netem delay 15ms"},
+		{"none", "tc qdisc del dev eth0 root"},
+	} {
+		s := DeclaredShaping(c.profile, c.command)
+		if !strings.Contains(s.Origin, "not applied and not verified by the rig") {
+			t.Fatalf("profile %q with command %q reported its origin as %q, which no longer says the rig neither applied nor verified the shaping", c.profile, c.command, s.Origin)
+		}
+	}
+}
+
+// The report is read as JSON by whoever writes the measurement record, so the
+// command has to reach them under a name they can find. A field renamed in the
+// struct tag is invisible to the tests above and reds this one.
+func TestTheShapingCommandReachesTheReportAsJSON(t *testing.T) {
+	encoded, err := json.Marshal(DeclaredShaping("30ms-rtt", "tc qdisc add dev eth0 root netem delay 15ms"))
+	if err != nil {
+		t.Fatalf("encoding the shaping record: %v", err)
+	}
+	if !strings.Contains(string(encoded), `"command":"tc qdisc add dev eth0 root netem delay 15ms"`) {
+		t.Fatalf("the encoded record is %s, and the command is not in it under that name", encoded)
 	}
 }
