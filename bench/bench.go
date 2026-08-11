@@ -179,22 +179,42 @@ func Measure(sys System, cfg Config) (Pass, error) {
 // The rig does not apply shaping and does not check it. Shaping is the
 // operating system's own facility applied from outside to the container the
 // system under test runs in, which is a thing the rig has no handle on, so the
-// most it can honestly do is carry the name it was given and say that it
-// carried it rather than verified it.
+// most it can honestly do is carry what it was given and say that it carried it
+// rather than verified it.
+//
+// What it is given is two different things. A profile name is a label somebody
+// chose, and two runs under one label are comparable only if whoever ran them
+// meant the same thing by it. Command is the shaping that was actually applied,
+// written out, and it is the only part of this record a later reader can act
+// on: they can run it, read it against the label, or see that the label was
+// wrong. Neither is verified here, and carrying the command does not make the
+// shaping any more checked than the name does.
 type Shaping struct {
 	Profile string `json:"profile"`
+	Command string `json:"command"`
 	Origin  string `json:"origin"`
 }
 
-// DeclaredShaping labels a profile as what it is: an assertion by whoever ran
-// the rig.
-func DeclaredShaping(profile string) Shaping {
+// DeclaredShaping labels a profile and the command behind it as what they are:
+// assertions by whoever ran the rig.
+//
+// A named profile with no command is the case worth handling rather than
+// permitting quietly. An empty command field is what an unshaped run also
+// carries, so the two would read alike in a report, and the difference between
+// them is the difference between nothing to record and something nobody wrote
+// down. The origin sentence says which one it is.
+func DeclaredShaping(profile, command string) Shaping {
 	if profile == "" {
 		profile = "none"
 	}
+	origin := "declared by the caller; not applied and not verified by the rig"
+	if command == "" && profile != "none" {
+		origin += "; no command was declared for this profile, so the name is the whole of the record"
+	}
 	return Shaping{
 		Profile: profile,
-		Origin:  "declared by the caller; not applied and not verified by the rig",
+		Command: command,
+		Origin:  origin,
 	}
 }
 

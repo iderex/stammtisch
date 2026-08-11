@@ -42,8 +42,16 @@ this project's software, and none of it is a measurement of anybody else's.
 The rig applies no network shaping and checks none. Shaping is the operating
 system's own facility, applied from outside to the container the system under
 test runs in, which is a thing the rig has no handle on. `--shaping` records the
-name it is given and the report says in the same breath that the name was
-declared rather than verified.
+name it is given and `--shaping-command` records the command that was applied,
+verbatim and unrun. The report says in the same breath that both were declared
+rather than verified.
+
+Give the command whenever the profile is not `none`. A profile name is a label
+somebody chose, and two runs under one label are comparable only if whoever ran
+them meant the same thing by it; the command is the part a later reader can run,
+read against the label, or find wrong. Where a named profile arrives without
+one, the report says so in its origin line rather than leaving a field that
+reads the same as an unshaped run.
 
 Delays at or above `max_measurable_delay_ms`, which the report carries, are not
 reported as large. They are not reported correctly at all, because past that

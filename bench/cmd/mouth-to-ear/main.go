@@ -41,6 +41,7 @@ func run(args []string, stdout, stderr *os.File) error {
 		trials     = fs.Int("trials", 0, "chirps per pass (default 300)")
 		minSamples = fs.Int("min-samples", 300, "fail unless a pass detects at least this many chirps")
 		shaping    = fs.String("shaping", "none", "name of the network shaping profile in force")
+		shapingCmd = fs.String("shaping-command", "", "the command that applied that profile, recorded verbatim and not run here")
 		out        = fs.String("out", "", "write the report to this file instead of standard output")
 		raw        = fs.Bool("raw", false, "include every individual delay in the report")
 		repeat     = fs.Bool("repeat", true, "run a second pass and compare p95")
@@ -77,10 +78,10 @@ func run(args []string, stdout, stderr *os.File) error {
 		TrialPeriodMs:    float64(cfg.TrialPeriod()) / float64(time.Millisecond),
 		MaxMeasurableMs:  float64(cfg.MaxMeasurableDelay()) / float64(time.Millisecond),
 		PercentileMethod: bench.PercentileMethod,
-		Shaping:          bench.DeclaredShaping(*shaping),
+		Shaping:          bench.DeclaredShaping(*shaping, *shapingCmd),
 		Notes: []string{
 			"The system under test is the rig's own delay fixture. No implementation of bench.System reaches a real audio path in this tree, so nothing here measures this project's software or anybody else's.",
-			"The shaping profile is carried as declared. The rig neither applied it nor checked it.",
+			"The shaping profile and the command under it are carried as declared. The rig neither applied them nor checked them, and it did not run the command.",
 			"Delays at or above max_measurable_delay_ms are not reported as large; they are not reported correctly at all.",
 		},
 	}
