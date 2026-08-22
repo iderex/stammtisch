@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// Copyright (C) 2026  iderex
+// Copyright (C) 2026  Nils Lehnen
 
 // Package auth holds the credential a server stores, the comparison it makes
 // against one presented to it, and the session that comparison opens.

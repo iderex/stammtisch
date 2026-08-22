@@ -1,6 +1,6 @@
 #!/bin/sh
 # SPDX-License-Identifier: AGPL-3.0-or-later
-# Copyright (C) 2026  iderex
+# Copyright (C) 2026  Nils Lehnen
 #
 # Refuses a tracked source file whose first two lines are not the licence
 # header for the arm that covers it, and refuses a tracked file it cannot
@@ -31,7 +31,7 @@ set -eu
 
 SPDX_DEFAULT='SPDX-License-Identifier: AGPL-3.0-or-later'
 SPDX_APACHE='SPDX-License-Identifier: Apache-2.0'
-COPY='Copyright (C) 2026  iderex'
+COPY='Copyright (C) 2026  Nils Lehnen'
 
 # The paths under the second arm, as a list this script reads rather than as a
 # sentence in a document that nothing compares against the tree. Each entry is a
