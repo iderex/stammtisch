@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// Copyright (C) 2026  iderex
+// Copyright (C) 2026  Nils Lehnen
 
 // Command allowed is the near miss. It is the same call as its neighbour, made
 // with an identifier instead of a name, and it has to build.

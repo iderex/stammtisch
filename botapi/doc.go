@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// Copyright (C) 2026  iderex
+// Copyright (C) 2026  Nils Lehnen
 
 // Package botapi holds the bot API surface, which is a public contract third
 // parties write against.

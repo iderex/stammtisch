@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// Copyright (C) 2026  iderex
+// Copyright (C) 2026  Nils Lehnen
 
 // Package signalling holds the framing every message between a client, a bot
 // and the server travels inside, and the connection state that decides which of

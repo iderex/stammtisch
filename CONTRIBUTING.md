@@ -139,7 +139,7 @@ you.
 Every tracked source file starts with the two lines that say what it is under:
 
     // SPDX-License-Identifier: AGPL-3.0-or-later
-    // Copyright (C) 2026  iderex
+    // Copyright (C) 2026  Nils Lehnen
 
 In a shell script the prefix is `#` and the two lines come after the shebang.
 
