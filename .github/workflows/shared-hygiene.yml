@@ -1,0 +1,32 @@
+# The shared half of the hygiene rules, called rather than copied (#162).
+#
+# This runs beside pr-hygiene.yml in this directory and does not replace it. The
+# check here compares every path the change touches against the Scope: line of
+# the issue it names, and it only counts a reference that resolves to an issue in
+# this repository rather than to a pull request; the shared half looks at neither
+# a changed path nor a tracker. So this call is an addition, and dropping a rule
+# from pr-hygiene.yml would be a separate change, made one rule at a time and
+# only once the shared half is shown to cover it.
+#
+# The subject rule is off. The shared half wants the issue in square brackets in
+# the subject and this board does not ask for it there at all: of 49 non-merge
+# subjects on main, none carry [#N] and one carries any form of #N, because the
+# reference goes in the message body here. Not calling the check at all would say
+# nothing, whereas switching one rule off says which rule the board does not meet.
+#
+# PINNED BY HASH, NOT BY BRANCH. A moving reference would let the called
+# repository change what executes here without anybody reviewing it, and the
+# boards' own action-pin guards refuse it for that reason.
+name: Shared hygiene
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  hygiene:
+    uses: iderex/wache/.github/workflows/pr-hygiene.yml@9b311243c2d0d0ced7feb957a20bc178acce6a5d # v1.0.0
+    with:
+      subject_names_issue: false
