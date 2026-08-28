@@ -109,6 +109,27 @@
 # so, not that every run measures. A red run here is a run to repeat, and the
 # coefficient is what to raise before repeating it.
 #
+# THE DEFAULT IS 30 BECAUSE 6 DID NOT MEASURE ON A RUNNER, and both figures come
+# from this job on `main` rather than from a machine somebody else has. At 6 the
+# first run refused one package outright:
+#
+#     REFUSED: internal/store/sqlite executed no mutant at all, so its score is over nothing, with 45 timed out
+#
+# At 30 the same package measured, and so did the rest of the surface:
+#
+#     ok    internal/store/sqlite at 97.67% over 43 executed: 42 killed, 1 lived, 2 timed out, 2 not covered
+#
+# The two runs are otherwise identical and both are on `865eac3beb20c483481c5954ae5e23b266e0c1a7`.
+# Raising it costs wall time only where a mutant hangs, because the cut-off is
+# what a run waits before giving up rather than what it spends. The two runs
+# took 2m18s and 2m32s end to end, and the second measured 43 more mutants for
+# the fourteen seconds:
+#
+#     gh api repos/iderex/stammtisch/actions/runs/33132055559 --jq '"\(.run_started_at) \(.updated_at)"'
+#     2026-08-28T01:10:50Z 2026-08-28T01:13:08Z
+#     gh api repos/iderex/stammtisch/actions/runs/33132757987 --jq '"\(.run_started_at) \(.updated_at)"'
+#     2026-08-28T01:24:25Z 2026-08-28T01:26:57Z
+#
 # THE MEANS. `gremlins` is a Go program installed by the toolchain this module
 # already declares, pinned to an exact version, resolved through the module
 # proxy and the checksum database, and it neither reads nor writes this module's
@@ -139,7 +160,7 @@ on:
       timeout-coefficient:
         description: "Multiplier on the runner's own timing of an unmutated run"
         required: false
-        default: "6"
+        default: "30"
 
 # Read-only: the job reads the tree, seeds faults into a copy the runner makes
 # and discards, and uploads what it found. It writes nothing back to the
@@ -186,7 +207,7 @@ jobs:
         env:
           # Through the environment rather than interpolated into the script, so
           # the input cannot become part of the command.
-          COEFFICIENT: ${{ github.event.inputs.timeout-coefficient || '6' }}
+          COEFFICIENT: ${{ github.event.inputs.timeout-coefficient || '30' }}
         run: |
           set -eu
 
