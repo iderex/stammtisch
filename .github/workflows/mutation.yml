@@ -1,0 +1,449 @@
+# Mutation testing, on a schedule and on demand, reporting and never gating.
+#
+# Coverage says a line ran. It does not say a test would have noticed the line
+# being wrong. This seeds a fault into the code that decides security outcomes
+# and asks whether a test then fails, so a surviving mutant is a concrete
+# missing test rather than an abstract concern.
+#
+# It has no pull_request trigger and no push trigger, deliberately. A mutation
+# score is a local signal about test quality, and a merge condition turns it
+# into a number people manage rather than a question people answer. A name that
+# never reports on a pull request also cannot become a required check by
+# accident, which is what issue #73 asks for in those words.
+#
+# The surface is not written here. It is read out of `coverage-bar.yml`, whose
+# surface list is the authority for which packages decide a security outcome on
+# this board, and a second list in this file would drift against it the first
+# time a package moved. If that block cannot be found or comes out empty, this
+# job refuses rather than measuring whatever it happened to find.
+#
+# THE SCORE IS REPORTED AND NOTHING IS GATED ON IT. A low efficacy is a work
+# list, not a failure, and the proof block below spends a fixture on exactly
+# that: a report at zero percent is accepted.
+#
+# WHAT IS REFUSED IS A RUN THAT CANNOT MEASURE, AND THAT IS A LARGER SET THAN AN
+# ABSENT REPORT. Issue #73 asks that a run producing no report fail visibly,
+# because that is how a broken tool stays invisible. A report can be present and
+# say nothing, and on this tree it does so in a way that reads like good news.
+#
+# A mutant the runner had to cut off for taking too long is dropped from the
+# arithmetic entirely rather than counted either way. Efficacy is killed over
+# killed plus lived, and `mutants_total` in the machine-readable report is that
+# same sum, so a run in which nearly everything timed out reports a percentage
+# over the handful that ran and looks exactly like a run that executed all of
+# them. Read out of one report rather than described:
+#
+#     gremlins unleash ./internal/store/sqlite --timeout-coefficient 6 -o r.json
+#     jq -c '{test_efficacy,mutants_total,mutants_killed,mutants_lived}' r.json
+#     {"test_efficacy":93.18181818181817,"mutants_total":44,"mutants_killed":41,"mutants_lived":3}
+#     jq '[.files[].mutations[] | select(.status=="TIMED OUT")] | length' r.json
+#     1
+#
+# 41 plus 3 is 44, and the timed-out mutant is in the per-mutation list and in
+# no total.
+#
+# THE NUMBER MOVES FROM 0 TO 100 WITH NO CHANGE TO THE CODE OR THE TESTS, and
+# that is measured rather than feared. Three consecutive runs of one package at
+# eef7542c8335324336448569e14ce3d98446e60e, same tool, same flags, minutes
+# apart, on one machine outside CI:
+#
+#     for i in 1 2 3; do
+#       echo "=== run $i (defaults) ==="
+#       gremlins unleash ./internal/signalling 2>&1 | grep -E 'Killed:|Timed|efficacy'
+#     done
+#     === run 1 (defaults) ===
+#     Killed: 45, Lived: 6, Not covered: 0
+#     Timed out: 0, Not viable: 0, Skipped: 0
+#     Test efficacy: 88.24%
+#     === run 2 (defaults) ===
+#     Killed: 0, Lived: 0, Not covered: 0
+#     Timed out: 51, Not viable: 0, Skipped: 0
+#     Test efficacy: 0.00%
+#     === run 3 (defaults) ===
+#     Killed: 2, Lived: 0, Not covered: 0
+#     Timed out: 49, Not viable: 0, Skipped: 0
+#     Test efficacy: 100.00%
+#
+# The third run is the dangerous one. It reports the best score available off
+# two executed mutants out of fifty-one, and it is the run that would be quoted.
+#
+# So the refusal is: for each package, the mutants that timed out have to be a
+# strict minority of the ones that were executed and judged. Where they are not,
+# the percentage describes a minority of the run, and this job says so and reds
+# in the same way it reds on an absent report. Where they are, the score is
+# printed and nothing is gated on it.
+#
+# THE COEFFICIENT IS THE KNOB AND IT IS AN INPUT RATHER THAN A CONSTANT HERE, so
+# somebody meeting that refusal can raise it without editing this file. It
+# multiplies the runner's own timing of an unmutated run to get the cut-off per
+# mutant. On the same tree and the same machine as the runs above:
+#
+#     gremlins unleash ./internal/store/sqlite 2>&1 | grep -E 'Killed:|Timed|efficacy'
+#     Killed: 12, Lived: 1, Not covered: 2
+#     Timed out: 32, Not viable: 0, Skipped: 0
+#     Test efficacy: 92.31%
+#
+#     gremlins unleash ./internal/store/sqlite --timeout-coefficient 6 2>&1 \
+#       | grep -E 'Killed:|Timed|efficacy'
+#     Killed: 41, Lived: 3, Not covered: 2
+#     Timed out: 1, Not viable: 0, Skipped: 0
+#     Test efficacy: 93.18%
+#
+# Thirty-one mutants moved from uncounted to judged and the reported percentage
+# barely moved, which is the whole argument for the refusal: the number was
+# never the thing that was wrong.
+#
+# THE COEFFICIENT IS NOT A FIX AND THIS FILE DOES NOT CLAIM IT IS. Two runs
+# contradict that reading directly. `./internal/signalling` at coefficient 6, on
+# the same tree and machine, produced 23 killed, 0 lived and 28 timed out, which
+# is worse than any of its three runs at the default. And the whole surface run
+# below, at coefficient 6, refused `./internal/store/sqlite` for 32 timeouts
+# against 13 executed, which is the same package the pair above measured cleanly
+# at that coefficient minutes earlier.
+#
+# What decides how many mutants are cut off is how loaded the machine is while
+# the suite runs under a mutant, and no value written here controls that.
+# `--workers 1` is the obvious answer and it was tried: one package had not
+# finished after ten minutes and the attempt was abandoned, so no figure for it
+# exists. What this job guarantees is that a run which could not measure says
+# so, not that every run measures. A red run here is a run to repeat, and the
+# coefficient is what to raise before repeating it.
+#
+# THE MEANS. `gremlins` is a Go program installed by the toolchain this module
+# already declares, pinned to an exact version, resolved through the module
+# proxy and the checksum database, and it neither reads nor writes this module's
+# `go.mod`. It adds no language and no runtime to the tree, and its report is
+# JSON that `jq` reads, which is the same pair `sbom.yml` already depends on. It
+# was not compared against another mutation runner, so this is one candidate
+# measured rather than a field surveyed, and that is the residual.
+#
+# WHAT THIS DOES NOT DO. It does not triage. Issue #73's fourth condition asks
+# that the first run's surviving mutants each be killed by a new test or
+# recorded as equivalent with the reason, and killing one means writing a test
+# under `internal/`, which is outside the `Scope: .github/workflows/` that issue
+# declares. The survivors are printed per package by the step below so the
+# triage has a work list rather than a percentage, and that condition stays
+# open.
+#
+# Hardened the same way as every other workflow here: read-only permissions at
+# the top level, every action pinned by commit with a version comment, and
+# checkout without persisted credentials.
+name: Mutation
+
+on:
+  schedule:
+    # Weekly, at an hour nothing else here runs.
+    - cron: "41 5 * * 4"
+  workflow_dispatch:
+    inputs:
+      timeout-coefficient:
+        description: "Multiplier on the runner's own timing of an unmutated run"
+        required: false
+        default: "6"
+
+# Read-only: the job reads the tree, seeds faults into a copy the runner makes
+# and discards, and uploads what it found. It writes nothing back to the
+# repository.
+permissions:
+  contents: read
+
+# Two runs of this are not the same run with different luck, and a scheduled one
+# that is superseded by a manual one has still done work worth keeping. Nothing
+# is cancelled.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  mutation:
+    name: Mutation
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          # The floor comes from go.mod rather than from a number written here,
+          # so the toolchain this job uses cannot drift from the one the module
+          # declares.
+          go-version-file: go.mod
+          cache: false
+
+      - name: Install the runner
+        # Pinned to an exact version rather than a floating one, for the same
+        # reason the bill-of-materials generator is: a runner that updates on
+        # its own changes the report under a schedule nobody touched.
+        env:
+          GREMLINS_VERSION: v0.5.0
+        run: go install "github.com/go-gremlins/gremlins/cmd/gremlins@${GREMLINS_VERSION}"
+
+      - name: Prove the judgement refuses, then measure the surface
+        env:
+          # Through the environment rather than interpolated into the script, so
+          # the input cannot become part of the command.
+          COEFFICIENT: ${{ github.event.inputs.timeout-coefficient || '6' }}
+        run: |
+          set -eu
+
+          work=$(mktemp -d)
+          trap 'rm -rf "$work"' EXIT
+
+          case "$COEFFICIENT" in
+            ''|*[!0-9]*)
+              echo "REFUSED: the timeout coefficient must be a whole number, and it was '$COEFFICIENT'"
+              exit 1
+              ;;
+          esac
+
+          # ---- the surface, read out of the coverage gate --------------------
+          #
+          # The block between the heredoc opener and its terminator in
+          # coverage-bar.yml, with comments and blanks dropped. That file is the
+          # authority for which packages decide a security outcome; this one
+          # asks it rather than carrying a copy.
+          awk '
+            /surface" <<.LIST./ { inside = 1; next }
+            inside && /^[[:space:]]*LIST[[:space:]]*$/ { inside = 0 }
+            inside { sub(/#.*/, ""); gsub(/[ \t]/, ""); if ($0 != "") print }
+          ' .github/workflows/coverage-bar.yml | sort -u > "$work/surface"
+
+          if [ ! -s "$work/surface" ]; then
+            echo "REFUSED: no surface list could be read out of .github/workflows/coverage-bar.yml, so nothing here knows what to mutate"
+            exit 1
+          fi
+
+          module=$(go list -m)
+          : > "$work/dirs"
+          while read -r pkg; do
+            case "$pkg" in
+              "$module"/*) printf './%s\n' "${pkg#"$module"/}" >> "$work/dirs" ;;
+              *)
+                echo "REFUSED: the surface names $pkg, which is not a package inside module $module"
+                exit 1
+                ;;
+            esac
+          done < "$work/surface"
+
+          echo "surface, read from coverage-bar.yml:"
+          sed 's/^/  /' "$work/dirs"
+
+          # ---- the judgement -------------------------------------------------
+          #
+          # judge <report> <label>. Prints what it found and returns 1 where the
+          # report cannot be measured. It never returns 1 for a low score.
+          judge() {
+            judge_report=$1
+            judge_label=$2
+
+            if [ ! -s "$judge_report" ]; then
+              echo "REFUSED: $judge_label produced no report, and an absent report is not a clean one"
+              return 1
+            fi
+            if ! jq -e 'type == "object"' "$judge_report" > /dev/null 2>&1; then
+              echo "REFUSED: $judge_label produced bytes that are not a report this job can read"
+              return 1
+            fi
+            if ! jq -e '(.mutants_killed | type == "number") and (.mutants_lived | type == "number") and (.files | type == "array")' \
+                 "$judge_report" > /dev/null 2>&1; then
+              echo "REFUSED: $judge_label produced a report missing the counts this job reads"
+              return 1
+            fi
+
+            judge_killed=$(jq -r '.mutants_killed' "$judge_report")
+            judge_lived=$(jq -r '.mutants_lived' "$judge_report")
+            judge_timeout=$(jq -r '[.files[].mutations[]? | select(.status == "TIMED OUT")] | length' "$judge_report")
+            judge_uncovered=$(jq -r '.mutants_not_covered // 0' "$judge_report")
+            judge_efficacy=$(jq -r '(.test_efficacy // 0) * 100 | round / 100' "$judge_report")
+            judge_executed=$((judge_killed + judge_lived))
+
+            if [ "$judge_executed" -eq 0 ]; then
+              echo "REFUSED: $judge_label executed no mutant at all, so its score is over nothing, with $judge_timeout timed out"
+              return 1
+            fi
+
+            # The strict comparison is the whole rule. Equal counts mean the
+            # percentage describes half the attempted work, and half is not a
+            # measurement of a suite.
+            if [ "$judge_timeout" -ge "$judge_executed" ]; then
+              echo "REFUSED: $judge_label timed out on $judge_timeout mutants and executed $judge_executed, so its ${judge_efficacy}% describes a minority of the run"
+              return 1
+            fi
+
+            echo "ok    $judge_label at ${judge_efficacy}% over $judge_executed executed: $judge_killed killed, $judge_lived lived, $judge_timeout timed out, $judge_uncovered not covered"
+            return 0
+          }
+
+          # ---- the proof, run before anything is mutated ---------------------
+          #
+          # Every fixture is a report this job could actually be handed. The
+          # pair that matters is the last two: they differ by one timed-out
+          # mutant across the boundary, so a `>` written where the rule needs
+          # `>=` reds here rather than passing a run that measured half of
+          # itself.
+
+          mkdir "$work/fx"
+
+          : > "$work/fx/empty.json"
+          printf 'not a report at all\n' > "$work/fx/garbage.json"
+          printf '[]\n' > "$work/fx/notobject.json"
+          printf '{"files":[],"test_efficacy":100}\n' > "$work/fx/nocounts.json"
+
+          # Builds a report carrying the counts asked for. The per-mutation
+          # entries are what the timed-out count is read from, so they are real
+          # entries rather than a number written into a field the runner does
+          # not emit.
+          fixture() {
+            fx_killed=$1
+            fx_lived=$2
+            fx_timeout=$3
+            fx_name=$4
+            {
+              printf '{"files":[{"file_name":"fixture.go","mutations":['
+              fx_first=1
+              for fx_pair in "$fx_killed KILLED" "$fx_lived LIVED" "$fx_timeout TIMED_OUT"; do
+                set -- $fx_pair
+                fx_n=$1
+                fx_status=$(printf '%s' "$2" | tr '_' ' ')
+                fx_i=0
+                while [ "$fx_i" -lt "$fx_n" ]; do
+                  [ "$fx_first" -eq 1 ] || printf ','
+                  fx_first=0
+                  printf '{"type":"CONDITIONALS_BOUNDARY","status":"%s","line":1,"column":1}' "$fx_status"
+                  fx_i=$((fx_i + 1))
+                done
+              done
+              printf ']}],"mutants_killed":%s,"mutants_lived":%s,"mutants_not_covered":0,"test_efficacy":%s}\n' \
+                "$fx_killed" "$fx_lived" \
+                "$(awk -v k="$fx_killed" -v l="$fx_lived" 'BEGIN { if (k + l > 0) printf "%.10g", 100 * k / (k + l); else print 0 }')"
+            } > "$work/fx/$fx_name"
+          }
+
+          fixture 0 0 4 nothing-executed.json
+          fixture 0 5 0 zero-percent.json
+          fixture 2 0 2 timeouts-equal.json
+          fixture 3 0 2 timeouts-minority.json
+
+          proof_failures=0
+          expect_judge() {
+            want=$1
+            fixture_name=$2
+            what=$3
+            if judge "$work/fx/$fixture_name" "the $fixture_name fixture" > "$work/proof.log" 2>&1; then
+              got=accepted
+            else
+              got=refused
+            fi
+            if [ "$got" = "$want" ]; then
+              printf 'proved %s: %s\n' "$want" "$what"
+            else
+              printf 'PROOF FAILED: %s was %s, and it is %s\n' "$fixture_name" "$got" "$what"
+              sed 's/^/    /' "$work/proof.log"
+              proof_failures=1
+            fi
+          }
+
+          echo
+          expect_judge refused  empty.json             "an absent report"
+          expect_judge refused  garbage.json           "bytes that are not a report"
+          expect_judge refused  notobject.json         "a report that is not an object"
+          expect_judge refused  nocounts.json          "a report missing the counts this job reads"
+          expect_judge refused  nothing-executed.json  "a report whose mutants all timed out"
+          expect_judge refused  timeouts-equal.json    "a report with as many timeouts as executed mutants"
+          expect_judge accepted timeouts-minority.json "the same report with one fewer timeout, which is the near miss on that boundary"
+          expect_judge accepted zero-percent.json      "a report at 0 percent, because a low score is a work list and not a failure"
+
+          if [ "$proof_failures" -ne 0 ]; then
+            echo "REFUSED: the judgement did not prove it can say no, so nothing is mutated"
+            exit 1
+          fi
+
+          # ---- the surface ---------------------------------------------------
+
+          # The reports are written outside the module on purpose. The runner
+          # copies the working directory once per mutant, so a report written
+          # into the tree is copied again for every mutant that follows it and
+          # arrives inside the copies as a file the run then trips over. They
+          # are moved into the workspace once, after the last package.
+          mkdir "$work/reports"
+          echo
+          echo "mutating, at a timeout coefficient of ${COEFFICIENT}"
+
+          failed=0
+          : > "$work/summary"
+          : > "$work/survivors"
+
+          while read -r dir; do
+            label=${dir#./}
+            slug=$(printf '%s' "$label" | tr '/' '-')
+            report="$work/reports/${slug}.json"
+
+            echo
+            echo "--- $label"
+            # Every package runs even where an earlier one was refused, because
+            # a package that could not be measured is not a reason to learn
+            # nothing about the next, and the run is red either way.
+            if ! gremlins unleash "$dir" --timeout-coefficient "$COEFFICIENT" -o "$report"; then
+              echo "REFUSED: the runner exited non-zero on $label"
+              failed=1
+            fi
+
+            judge "$report" "$label" > "$work/verdict" 2>&1 || failed=1
+            cat "$work/verdict"
+            cat "$work/verdict" >> "$work/summary"
+
+            if [ -s "$report" ] && jq -e 'type == "object"' "$report" > /dev/null 2>&1; then
+              jq -r --arg pkg "$label" \
+                '.files[]? | .file_name as $f | .mutations[]? | select(.status == "LIVED")
+                 | "\($pkg)/\($f):\(.line):\(.column) \(.type)"' \
+                "$report" >> "$work/survivors"
+            fi
+          done < "$work/dirs"
+
+          mkdir -p reports
+          cp "$work/reports/"*.json reports/ 2>/dev/null || true
+
+          echo
+          if [ -s "$work/survivors" ]; then
+            echo "survivors, which are the triage list rather than the score:"
+            sed 's/^/  /' "$work/survivors"
+          else
+            echo "no mutant survived on any package measured here"
+          fi
+
+          {
+            echo "## Mutation"
+            echo
+            echo "Reported, never gated. A run is red only where it could not measure."
+            echo
+            echo '```'
+            cat "$work/summary"
+            echo '```'
+            echo
+            echo "Survivors:"
+            echo
+            if [ -s "$work/survivors" ]; then
+              echo '```'
+              cat "$work/survivors"
+              echo '```'
+            else
+              echo "None on any package measured here."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          exit "$failed"
+
+      - name: Archive the reports
+        # Always, because the refused run is the one whose report somebody has
+        # to read to decide what the coefficient should have been.
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: mutation-reports
+          path: reports
+          if-no-files-found: warn
+          retention-days: 90
