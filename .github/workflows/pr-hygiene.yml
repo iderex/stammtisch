@@ -41,8 +41,28 @@ permissions:
   contents: read
   issues: read
 
+# The group is namespaced by the workflow name, and the bare name it replaced is
+# what #166 was about. `iderex/wache`'s reusable pr-hygiene.yml declares the
+# identical expression `pr-hygiene-${{ github.event.pull_request.number }}`, a
+# concurrency group is scoped to the repository doing the calling rather than to
+# the file that declared it, and shared-hygiene.yml calls that workflow on the
+# same `pull_request` event. So the two entered one group, the call was created a
+# second later, and `cancel-in-progress` cancelled this run before its first
+# step. Every run of Shared hygiene there has ever been did it.
+#
+# `github.workflow` is the caller's workflow name even inside a called workflow,
+# so it is exactly the discriminator this needs: two runs share a group only when
+# they are runs of the same workflow on the same pull request. That is the case
+# that should still cancel - a newer event superseding an older one, where
+# nothing has been published and the newer run reports under the same check-run
+# name. A different workflow that merely runs on the same pull request is not
+# that case and no longer cancels this one.
+#
+# The group therefore moves when `name:` above moves. What that costs is a pair
+# of in-flight runs not superseding each other across the rename, and it is not
+# the check-run name, which is the job's `name:` below.
 concurrency:
-  group: pr-hygiene-${{ github.event.pull_request.number }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:
