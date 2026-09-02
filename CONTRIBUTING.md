@@ -205,10 +205,36 @@ and not whether a number in it carries the command that produced it.
 
 ## Signatures
 
-`NOT ENFORCED`, issue #78. The ruleset carries no `required_signatures` rule, so
-an unsigned commit merges exactly like a signed one and the output above is where
-you can confirm that. Signing your commits is worth doing and nothing here will
-notice if you do not.
+REFUSED BY THE RULESET. It carries a `required_signatures` rule and has no
+bypass actors, so a commit without a verified signature does not reach `main`,
+whoever made it. This paragraph said the opposite until the setting moved under
+it, which is why the command rather than the paragraph is the thing to read:
+
+    gh api repos/iderex/stammtisch/rulesets/20482339 --jq '[.rules[].type]'
+    ["deletion","non_fast_forward","pull_request","required_status_checks","required_signatures"]
+
+Set your clone up to sign before you start rather than after, because this is the
+one requirement here that fails in the middle of the work instead of at the
+beginning of it. What you just made either carries a signature or does not:
+
+    git log --show-signature -1
+
+When signing does fail, the way around it is one flag - `git commit --no-gpg-sign`,
+or `-c commit.gpgsign=false` - and it is the wrong repair. Nothing before the
+merge refuses either spelling: no workflow in this repository reads a signature,
+so an unsigned commit builds, lints and goes green on every check listed above
+exactly like a signed one.
+
+    grep -rniE 'signature|gpgsign|signing' .github/ ; echo "exit=$?"
+    exit=1
+
+The forge is the only thing that says otherwise, at the merge button, and by then
+the repair is every commit on the branch re-made. Fix the signing instead.
+
+`NOT ENFORCED` for what a verified signature means, and no issue owes a mechanism
+for it. The forge checks that the signature matches a key registered to some
+GitHub account. That the person named in the author field is the person who made
+the commit is a different claim, and nothing in a tree can be read to decide it.
 
 ## Comments and review
 
