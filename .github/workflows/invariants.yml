@@ -1,50 +1,78 @@
-# The structural invariants, as patterns a machine refuses.
+# The structural invariant that no Go guard holds, as a pattern a machine
+# refuses.
 #
-# Several rules on this board are structural and cheap to check by pattern: no
-# direct clock read in the orchestration packages, no logging outside the one
-# surface, no media plane import in the orchestration packages, and no
-# permission decision outside the one function. Each was written as a
-# requirement on some issue, and a requirement no machine refuses is an
-# explanation of a rule rather than a rule.
+# Issue #76 named five structural rules and asked that each become a pattern
+# rule here. Four of the five are settled somewhere other than a pattern, and
+# this file holds the fifth. Which property is refused by what:
 #
-# Three of them already have a stronger guard inside the unit suite, which reads
-# the syntax tree and can tell a call from a declaration where a pattern cannot.
-# This check is not a replacement for those and does not repeat what they prove.
-# It covers the direction they cannot: a Go guard lives in one package and
-# judges that package, so a rule stops covering the tree the moment the work
-# lands somewhere else, and nothing says so. A pattern rule is keyed on a path
-# prefix, so it reaches a package that does not exist yet, which is the case
-# that actually arrives.
+#   no direct clock read in the orchestration packages
+#       internal/orchestration/clock_guard_test.go,
+#       TestNothingInOrchestrationReadsTheClockDirectly
+#   no media plane import in the orchestration packages
+#       internal/orchestration/import_graph_test.go,
+#       TestOrchestrationDoesNotReachTheMediaPlane
+#   no permission decision outside the one function
+#       internal/orchestration/permission_guard_test.go,
+#       TestOnlyOnePlaceDecidesAPermission
+#   no logging outside the one surface
+#       this file, rule logging-outside-the-log-surface
+#   no direct device call from the client logic package
+#       nothing yet; the package does not exist and #58 is where the platform
+#       is chosen
 #
-# The rules are data. They sit in the block below, one stanza each, and the code
-# under them applies whatever is in that block and decides nothing itself. Issue
-# #76 declares `Scope: .github/workflows/`, so a configuration file beside the
-# two scripts in `.github/` would be a path outside it, and the block is in this
-# file for that reason rather than because a data file would be worse.
+# The first three were pattern rules in this file as well, until #76 was taken.
+# Two mechanisms for one property drift: the day the syntax-tree guard is
+# widened, the pattern beside it goes on refusing the old set and nobody reads
+# both. So the stronger of the two keeps the property and the weaker one is
+# gone, and each of the three is stronger for a reason of its own rather than
+# by preference. The import guard asks the toolchain for the dependency graph,
+# so an import arriving through a third package is caught exactly like a direct
+# one, and a pattern over source cannot see a transitive import at all. The
+# permission guard parses each file and walks the syntax tree, refusing a call
+# to Granted or to has while allowing a declaration of Granted, which is how a
+# test supplies grants; a pattern cannot tell a call from a declaration. The
+# clock guard is the one closest to a pattern, and it still covers the tests as
+# well as the code under them and fails closed on an empty file list.
+#
+# What this file gave up in that trade is real and is worth reading before
+# somebody moves a rule back. A Go guard lives in the package it judges, so it
+# stops covering the tree the moment the work lands somewhere else and nothing
+# says so. A pattern rule is keyed on a path prefix and so reaches a package
+# nobody has written yet. That reach is now held for the logging rule alone,
+# which is the rule whose subject is the whole of internal/ rather than one
+# package.
+#
+# The device rule has no subject. No client platform has been chosen, the
+# package does not exist, and the call such a rule would refuse is named by the
+# platform, so a pattern written now would name an API nobody picked and would
+# never fire. #58 is where the platform is chosen; the rule belongs to
+# whichever change first creates that package, where the fixture proving it
+# bites can be the real thing.
+#
+# The rules are data. They sit in the block below, one stanza each, and the
+# code under them applies whatever is in that block and decides nothing itself.
+# Issue #76 declares `Scope: .github/workflows/`, so a configuration file
+# beside the two scripts in `.github/` would be a path outside it, and the
+# block is in this file for that reason rather than because a data file would
+# be worse.
 #
 # Every rule ships two fixtures and the run refuses a rule missing either. The
-# fixture that has to bite is the near miss rather than an obvious violation: a
-# blank import rather than a used one, a call on a receiver against a method
-# declaration of the same name, `fmt.Errorf` beside `fmt.Print`. Each rule is
-# also run against a file outside its own paths, and against its own exempt
-# paths where it has any, so a rule that fires everywhere fails here rather than
-# in somebody's unrelated change.
+# fixture that has to bite is the near miss rather than an obvious violation:
+# `fmt.Errorf` beside `fmt.Print`. Each rule is also run against a file outside
+# its own paths, and against its own exempt paths where it has any, so a rule
+# that fires everywhere fails here rather than in somebody's unrelated change.
 #
 # A rule whose paths hold no file today says so in the run and passes. That is
 # how a rule written before the code it covers reads, and printing it is what
-# stops a green run being read as a rule that found nothing.
-#
-# One invariant #76 names is not in the block. There is no rule for a direct
-# device call from the client logic package, because no client platform has been
-# chosen, the package does not exist, and the call such a rule would refuse is
-# named by the platform. #58 is where the platform is chosen; the rule belongs
-# to whichever change first creates that package. Writing a pattern for a device
-# API nobody has picked is a rule that never fires and says nothing, which is
-# the state this whole file exists to leave.
+# stops a green run being read as a rule that found nothing. It is not a way in
+# for a rule with no subject: such a rule cannot plant a fixture that bites
+# under a path that exists, which is what the proof above the tree scan asks of
+# every rule before the tree is judged at all.
 #
 # Hardened the same way as every other workflow here: read-only permissions at
 # the top level, every action pinned by commit with a version comment, and
 # checkout without persisted credentials.
+
 name: Invariants
 
 on:
@@ -100,33 +128,6 @@ jobs:
           #   allows   a line it has to leave alone, chosen to be the near miss
 
           cat > "$work/rules.conf" <<'RULES'
-          rule: clock-read-in-orchestration
-          paths: internal/orchestration/
-          files: *.go
-          exempt:
-          pattern: (^|[^[:alnum:]_.])time\.(Now|Since|Until|Sleep|After|AfterFunc|Tick|NewTimer|NewTicker)\(
-          why: this layer is made of grace periods and reconnect windows, and every one of them is untestable in a suite that waits for real time to pass. Time arrives through the injected Clock. Issue #24.
-          bites: 	if elapsed := time.Since(m.joinedAt); elapsed > grace {
-          allows: 	var grace time.Duration = deadline.Sub(m.joinedAt)
-
-          rule: media-import-in-orchestration
-          paths: internal/orchestration/
-          files: *.go
-          exempt:
-          pattern: ^[[:space:]]*(_[[:space:]]+|[[:alnum:]_]+[[:space:]]+)?"github\.com/iderex/stammtisch/internal/media(/|")
-          why: the orchestration layer stays importable with no media dependency, which is what lets the unit suite run on a machine with no audio device and nothing to forward media to.
-          bites: 	_ "github.com/iderex/stammtisch/internal/media"
-          allows: // The port is in github.com/iderex/stammtisch/internal/media and is passed in.
-
-          rule: permission-decision-outside-the-model
-          paths: internal/orchestration/
-          files: *.go
-          exempt: internal/orchestration/permission.go
-          pattern: \.(Granted|has)\(
-          why: one function decides a permission. A second decision site is how a bot skips a check a person takes, and it is written by reading a grant set directly instead of asking. Issue #29.
-          bites: 	if grants.Granted(p, s).has(SeeChannel) {
-          allows: func (f fakeGrantor) Granted(p Principal, s SpaceID) PermissionSet {
-
           rule: logging-outside-the-log-surface
           paths: internal/
           files: *.go
