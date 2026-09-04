@@ -84,6 +84,18 @@
 #     go test ./... -covermode=atomic -coverprofile=cover.out
 #     go tool cover -func=cover.out | grep 'internal/logging'
 #
+# internal/config is on the surface because it is the only thing between an
+# operator's file and a process that runs. What it decides is whether the
+# server starts at all, and every one of those decisions is a refusal: an
+# unknown key, a value the build does not accept, a required key nobody set.
+# A refusal that stopped firing would not show up as a failure anywhere; it
+# would show up as a server that started on a configuration nobody validated,
+# which is the failure the package exists against. It arrived with #66 and
+# measured 100.0 percent over 79 statements:
+#
+#     go test ./... -covermode=atomic -coverprofile=cover.out
+#     go tool cover -func=cover.out | grep 'internal/config'
+#
 # It fails closed. An unreadable, empty or unparseable profile is a refusal, and
 # the step proves that before it measures anything: it runs the same two
 # evaluations over deliberately faulty inputs in a temporary directory and
@@ -152,6 +164,7 @@ jobs:
 
           cat > "$work/surface" <<'LIST'
           github.com/iderex/stammtisch/internal/auth
+          github.com/iderex/stammtisch/internal/config
           github.com/iderex/stammtisch/internal/logging
           github.com/iderex/stammtisch/internal/orchestration
           github.com/iderex/stammtisch/internal/signalling
@@ -161,7 +174,7 @@ jobs:
           LIST
 
           cat > "$work/outside" <<'LIST'
-          github.com/iderex/stammtisch                         # the entry point; it wires and decides nothing
+          github.com/iderex/stammtisch                         # the entry point; it reads a flag, prints what internal/config decided, and decides nothing itself
           github.com/iderex/stammtisch/bench                   # a measurement rig, run by hand and never by the server
           github.com/iderex/stammtisch/bench/cmd/mouth-to-ear  # that rig's command
           github.com/iderex/stammtisch/botapi                  # the published surface, no code in it yet

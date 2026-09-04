@@ -1,0 +1,43 @@
+# An example configuration for stammtisch.
+#
+# One key and one value a line, separated by =. A line starting with # is a
+# comment and a blank line is nothing. There is no other syntax: no sections, no
+# lists, no quoting, and no way to write a value across two lines.
+#
+# Every key this build has is below with the value this file would use. Copy it,
+# change what you need, and pass the path to the server. A key this build does
+# not have stops the process rather than being ignored, and so does a value it
+# does not accept, with a message naming the key, the value and what was
+# expected.
+#
+# A key left out takes its default and the process says so at startup, in a line
+# you can paste when you ask for help. store-path is the one key with no
+# default: it is where your data lives and this program will not guess.
+#
+# No key here carries a secret and the format has no shape for writing one down.
+# A key that needs one will take the path of a file holding it and will be named
+# for that, so what is in this file stays a reference.
+
+# How long a room is held open after its last member leaves. Thirty seconds is
+# derived from the transport in docs/decisions/channel-and-room-model.md: past
+# it, ICE has given up and the client is making a new connection anyway.
+grace-period = 30s
+
+# How long a dropped client may claim its session back. It is its own value
+# rather than an alias of the grace period, because the two defend different
+# things and should not move together by accident.
+resume-window = 30s
+
+# How many changed channels a resume answer names before it stops naming them
+# and sends the whole state instead.
+resume-breadth = 64
+
+# The file the durable store lives in. There is no default. :memory: and a
+# file: URI are refused, because both are accepted by the database driver and
+# neither is the file you think you named.
+store-path = /var/lib/stammtisch/stammtisch.db
+
+# Where this process writes its log: stdout or stderr. A path is refused,
+# because this program holds no file and rotates nothing, and the supervisor you
+# already run captures and rotates the stream for you.
+log-destination = stdout
