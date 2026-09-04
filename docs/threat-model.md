@@ -3,7 +3,9 @@
 Raised by issue #82. Written at `89933e0`, against the tree at that commit.
 The section for somebody on the network path, and that attacker's entry in
 the admitted gaps, were rewritten at `979451f`, when the control they had
-been waiting for landed. Every other section reads as it did.
+been waiting for landed. The structural half of the first attacker was
+corrected at `080790b`, when the mechanism it named was removed. Every other
+section reads as it did.
 
 This model is about a service that carries personal communications on hardware
 an operator controls. It names what is worth taking, where the lines are that an
@@ -110,9 +112,20 @@ disclosed as forbidden. Occupancy fan-out is bounded by the same answer.
 
 The structural half matters as much as the answer. Nothing outside `Allow`
 decides a permission, and that is refused rather than reviewed:
-`TestOnlyOnePlaceDecidesAPermission` parses the package and refuses a call to
-`Granted` or `has` anywhere else, and `Greppable invariants` refuses the same
-vocabulary by path prefix so it already covers packages nobody has written.
+`TestOnlyOnePlaceDecidesAPermission` parses every Go file in the package except
+the model and its own, and refuses a call to `Granted` or to `has` and any
+mention of the principal kind. A declaration of `Granted` is left alone, which
+is how a test supplies grants, and telling that from a call is why this is a
+syntax tree rather than a pattern.
+
+This paragraph said `Greppable invariants` refused the same vocabulary by path
+prefix and so already covered packages nobody has written. It does not, and
+the claim was never worth as much as it sounded: the pattern rule named
+`internal/orchestration/`, which is the package the guard above already
+judges. #76 took the rule out rather than keep two mechanisms for one
+property, and the reach a pattern rule buys is held for logging alone. So a
+permission decided in a package nobody has written yet is refused by nothing
+until that package is in the guard's own reach.
 
 What is not controlled. Getting into the room is one half of hearing it. The
 other half is being subscribed to the tracks, which is admission and credential
