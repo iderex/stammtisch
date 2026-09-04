@@ -23,11 +23,12 @@ that is enforced rather than asked for. See the next section.
 
 `internal/media/` holds the media plane port and, beside it, its
 implementations. The port is the interface `docs/decisions/media-plane-port.md`
-specifies. The two implementations do not exist yet: the fake is issue #36 and
-the binding to the chosen unit is issue #40, and each gets its own directory
-under this one when it lands. Keeping them apart from everything that uses them
-is what lets a reviewer see at a glance whether the orchestration layer reached
-around the port.
+specifies, declared in `port.go`. One of the two implementations is here:
+`internal/media/fake/` is the in-memory one, and the binding to the chosen unit
+is issue #40 and gets its own directory under this one when it lands. This
+paragraph said neither existed, which was true until issue #36. Keeping them
+apart from everything that uses them is what lets a reviewer see at a glance
+whether the orchestration layer reached around the port.
 
 `internal/logging/` holds the one surface a log line is written through. It is a
 leaf: it imports nothing else in this module, and

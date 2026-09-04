@@ -96,6 +96,19 @@
 #     go test ./... -covermode=atomic -coverprofile=cover.out
 #     go tool cover -func=cover.out | grep 'internal/config'
 #
+# internal/media and internal/media/fake are on the surface for one reason
+# between them, and it is not that either runs in an operator's binary: the
+# fake does not. It is that the whole unit suite's meaning rests on the fake.
+# A refusal the fake cannot produce is a refusal the orchestration layer's
+# handling of it is never tested against, and the specification names that
+# case by hand: a fake that cannot produce PermissionsNotExpressible or
+# GainNotSupported leaves that handling untested. A percentage is what says
+# every one of those paths was reached. Both arrived with #36 and both
+# measured 100.0 percent, over 19 and 315 statements:
+#
+#     go test ./... -covermode=atomic -coverprofile=cover.out
+#     go tool cover -func=cover.out | grep 'internal/media'
+#
 # It fails closed. An unreadable, empty or unparseable profile is a refusal, and
 # the step proves that before it measures anything: it runs the same two
 # evaluations over deliberately faulty inputs in a temporary directory and
@@ -166,6 +179,8 @@ jobs:
           github.com/iderex/stammtisch/internal/auth
           github.com/iderex/stammtisch/internal/config
           github.com/iderex/stammtisch/internal/logging
+          github.com/iderex/stammtisch/internal/media
+          github.com/iderex/stammtisch/internal/media/fake
           github.com/iderex/stammtisch/internal/orchestration
           github.com/iderex/stammtisch/internal/signalling
           github.com/iderex/stammtisch/internal/store
@@ -178,7 +193,6 @@ jobs:
           github.com/iderex/stammtisch/bench                   # a measurement rig, run by hand and never by the server
           github.com/iderex/stammtisch/bench/cmd/mouth-to-ear  # that rig's command
           github.com/iderex/stammtisch/botapi                  # the published surface, no code in it yet
-          github.com/iderex/stammtisch/internal/media          # the media plane port, no code in it yet
           LIST
 
           # Drops comments and blank lines. awk rather than grep, because grep

@@ -4,8 +4,9 @@ Raised by issue #82. Written at `89933e0`, against the tree at that commit.
 The section for somebody on the network path, and that attacker's entry in
 the admitted gaps, were rewritten at `979451f`, when the control they had
 been waiting for landed. The structural half of the first attacker was
-corrected at `080790b`, when the mechanism it named was removed. Every other
-section reads as it did.
+corrected at `080790b`, when the mechanism it named was removed. The section
+on the state of the tree was corrected at `93c7827`, for two changes that had
+moved under it. Every other section reads as it did.
 
 This model is about a service that carries personal communications on hardware
 an operator controls. It names what is worth taking, where the lines are that an
@@ -21,17 +22,32 @@ service would be the more useful document and the false one.
 
 Nothing in this repository terminates a connection today. There is a framing, a
 version negotiation, a WebSocket binding, a credential and a session, an
-orchestration domain and a permission function, and an entry point that prints
-one line and exits:
+orchestration domain and a permission function, and an entry point that reads
+a configuration file, validates it and stops:
 
-    git grep -n 'nothing is implemented yet' -- main.go
-    main.go:18:	if _, err := fmt.Fprintln(os.Stdout, "stammtisch: nothing is implemented yet"); err != nil {
+    git grep -n 'nothing is served yet' -- main.go
+    main.go:91:	out.say("stammtisch: the configuration is valid, and nothing is served yet")
 
-There is no media plane. `internal/media` holds a package comment and no
-interface:
+This paragraph quoted a different line of a `main.go` that printed one sentence
+and exited. #66 replaced it, and the quotation went stale in the same merge,
+which is rule one's own defect standing in the document that describes the
+tree. What did not change is the sentence in front of it: nothing listens.
+
+There is still no media plane, and `internal/media` is no longer empty. The
+port is declared and there is an in-memory fake behind it:
 
     git ls-files internal/media
     internal/media/doc.go
+    internal/media/fake/fake.go
+    internal/media/fake/fake_test.go
+    internal/media/port.go
+    internal/media/port_test.go
+
+That is a declaration and a test double, and neither forwards a packet. This
+paragraph said the package held a comment and no interface, which was true
+until #36; what it says now is the narrower thing, and a reader who takes a
+declared port for a media plane would be taking exactly what the sentence
+above refuses to say.
 
 So the controls below split into two kinds, and the split is marked at every
 one. A control that is in the tree names the test that proves it. A control that
