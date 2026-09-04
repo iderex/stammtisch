@@ -6,24 +6,20 @@
 // reachable and no other way.
 //
 // Its implementations sit in directories beside this one rather than in it. The
-// in-memory fake is issue #36 and the binding to the chosen unit is issue #40;
-// neither exists yet.
+// in-memory fake is internal/media/fake and arrived with issue #36; the binding
+// to the chosen unit is issue #40 and does not exist.
 //
 // Nothing here decodes, mixes, transcodes or reads a payload. That is not an
 // omission waiting to be filled in: the property that the server never looks
 // inside the payload is what the per-person volume decision rests on.
 //
-// The interface itself is not here, and what is missing is narrower than that
-// sounds. Its specification is finished: docs/decisions/media-plane-port.md
-// fixes every operation with its preconditions, its postconditions and its
-// error set, and issue #3 is closed. What has no issue behind it is the Go
-// declaration those operations become. Issue #36 is where that absence is
-// recorded, because the fake it asks for has nothing to implement and no method
-// set for a check to compare against until the declaration exists, and issue
-// #40 waits behind the same line.
-//
-// This paragraph used to send a reader to issue #26 for that declaration. That
-// issue is closed, it is `Model the domain in code`, and the one line in it
-// naming the media plane asks for the opposite of a declaration here: that
-// nothing in the domain types imports this package.
+// The interface is in port.go, and it is the twelve operations that record
+// fixes with their preconditions, their postconditions and their error sets.
+// Two paragraphs stood here until it landed. One said the declaration was
+// missing and that issue #36 recorded the absence; that absence is closed. The
+// other said an earlier version of this comment sent a reader to issue #26,
+// which is `Model the domain in code`, closed, and whose one line naming the
+// media plane asks for the opposite of a declaration here: that nothing in the
+// domain types imports this package. That correction is kept, because the wrong
+// pointer is the thing a reader might remember.
 package media
