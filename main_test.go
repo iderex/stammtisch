@@ -5,6 +5,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -146,5 +147,24 @@ func TestNothingIsServedAndTheOutputSaysSo(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "nothing is served yet") {
 		t.Errorf("the output does not say that nothing is served: %s", stdout.String())
+	}
+}
+
+// brokenWriter fails every write, which is the stream an operator redirected
+// into something that has gone away.
+type brokenWriter struct{}
+
+func (brokenWriter) Write([]byte) (int, error) { return 0, errors.New("the stream is gone") }
+
+// TestAReportThatDidNotReachStdoutIsNotASuccessfulStart. A process that
+// validated a configuration and then wrote its report into a broken pipe has
+// told nobody anything, and exiting zero would report that as a good start.
+func TestAReportThatDidNotReachStdoutIsNotASuccessfulStart(t *testing.T) {
+	var stderr bytes.Buffer
+	if code := run([]string{"-config", write(t, good)}, brokenWriter{}, &stderr); code == 0 {
+		t.Error("a start whose whole output went nowhere reported success")
+	}
+	if !strings.Contains(stderr.String(), "did not reach stdout") {
+		t.Errorf("stderr does not say what went wrong: %s", stderr.String())
 	}
 }
