@@ -1,6 +1,9 @@
 # Threat model
 
 Raised by issue #82. Written at `89933e0`, against the tree at that commit.
+The section for somebody on the network path, and that attacker's entry in
+the admitted gaps, were rewritten at `979451f`, when the control they had
+been waiting for landed. Every other section reads as it did.
 
 This model is about a service that carries personal communications on hardware
 an operator controls. It names what is worth taking, where the lines are that an
@@ -133,34 +136,70 @@ clause and issue #39 are the same property from two ends.
 
 ### Somebody on the network path
 
-Not controlled, and no issue owed it before this model. Nothing in this tree
-encrypts anything, nothing requires a transport that does, and no check refuses
-a plaintext bind. Measured across the whole open board, before issue #148 was
-opened, which is why re-running it now answers 1 rather than 0:
+Controlled on the signalling leg, in the tree. Required rather than controlled
+on the media leg. `docs/decisions/transport-confidentiality.md` decides the two
+separately, because a proxy in front of the signalling connection says nothing
+about media and collapsing them is how one gets read as an answer about the
+other.
 
-    gh issue list --repo iderex/stammtisch --state open --limit 200 --json number,title,body --jq '[.[] | select((.title + " " + .body) | test("(?i)\\btls\\b|encrypt|srtp|dtls|in transit|https"))] | length'
-    0
+The signalling connection is confidential, and exactly two arrangements satisfy
+that: this process terminates TLS itself, or something in front of it does and
+forwards over a link the operator controls. Which one applies is an argument to
+the function that produces a signalling connection, and the value that refuses
+is the zero value, so a caller that says nothing about its deployment gets the
+refusal:
 
-Issue #30 specified the transport and its framing and its done-when does not
-mention confidentiality. Issue #40 binds the media unit and says nothing about
-the media path being encrypted. Issue #49 is about reachability and about
-whether a relay is bundled, which is a different question about the same wire.
+    grep -n 'TLSHere Transit = iota' internal/transport/confidentiality.go
 
-This was the one attacker in issue #82's own list with no control, no admitted
-gap and no issue anywhere. Issue #148 now owes it, and it covers both legs: the
-signalling connection, which is this tree's, and the media path, which is the
-unit's and is a requirement placed on the deployment rather than code written
-here.
+The refusal is proved by standing up the refused arrangement rather than by
+asserting the happy path, and a `Transit` no constant names refuses as well
+rather than being taken for a guarantee:
 
-Two things that are true today and are not a substitute for that issue. The
-WebSocket binding refuses a request whose `Origin` names another host, so a page
-on somebody else's host carrying a visitor's cookies cannot open a connection:
-`TestARequestFromAnotherOriginIsRefused`, which goes red if `InsecureSkipVerify`
-or an `OriginPatterns` entry is added. And the stored credential is a
-memory-hard digest with its parameters written beside it, so a network attacker
-who captures a login does not capture something the server could have handed
-back. Neither of those is confidentiality in transit and neither should be read
-as it.
+    go test ./internal/transport -run 'TestARequestThatDidNotArriveOverTLSIsRefused|TestTheRefusalOfANonConfidentialRequestIsAnswered|TestATransitValueNobodyHandledRefuses' -count=1
+
+A refused request is answered 403 and no connection is made for it.
+
+The media path is not this project's byte path, which
+`docs/decisions/media-engine.md` records. RFC 8827 requires DTLS-SRTP and
+defines no unprotected arm, so that leg is settled by the standard rather than
+chosen here and an operator cannot turn it off from this side. The connection
+between this process and the unit's own control interface is different: it
+carries room admission and the credentials minted for it, it has to be TLS, and
+nothing in this tree carries it because there is no adapter. Issue #40 is the
+adapter and issue #41 is the admission that would travel over it.
+
+Not controlled: any of this in a running service. Nothing here serves that
+handler, the entry point prints one sentence and exits, and the only callers are
+the suite:
+
+    git grep -l 'transport\.Handler(' -- '*.go'
+    internal/transport/confidentiality_test.go
+    internal/transport/websocket_test.go
+
+So what is in the tree binds the first process to serve the handler and refuses
+nothing today. Issue #69 is the startup self-check, and it is where a deployment
+that does not meet the record is made to say so at the moment an operator would
+see it.
+
+Not controlled: the forwarded arrangement itself. Nothing in this process can
+tell a request handed over by a proxy on the same host from one that crossed a
+network in the clear before it arrived, so that arrangement is the operator's
+word and is trusted deliberately, because the alternative is refusing the
+deployment shape almost every self-hosted service has. What the value buys is
+that the trust is typed at a call site under a name that says what is being
+claimed, rather than being the absence of a setting nobody looked at. Issue #66
+is where it stops being a call-site argument and becomes a key an operator sets,
+with the same refusing default.
+
+Two things that are true today and are not a substitute for either half above.
+The WebSocket binding refuses a request whose `Origin` names another host, so a
+page on somebody else's host carrying a visitor's cookies cannot open a
+connection: `TestARequestFromAnotherOriginIsRefused`, which goes red if
+`InsecureSkipVerify` or an `OriginPatterns` entry is added. And the stored
+credential is a memory-hard digest with its parameters written beside it, so a
+network attacker who captures a login does not capture something the server
+could have handed back. Neither of those is confidentiality in transit and
+neither should be read as it.
 
 ### A malicious bot holding a legitimate token
 
@@ -264,8 +303,11 @@ the gaps this model admits, in the order they appear above.
 - Room admission and track subscription do not enforce the permission answer.
   Issue #41.
 - There is no server-side mute. Issue #39.
-- Nothing is encrypted in transit and nothing requires it. Issue #148, opened
-  with this model.
+- Nothing serves the signalling handler, so the refusal of a connection that
+  is not confidential binds the first process to serve it and refuses nothing
+  today. Issue #69 is the startup self-check that would report which
+  arrangement a deployment is in, and issue #66 is the configuration key it
+  would be read from.
 - A bot token has no scopes, no rate limit and no stated revocation bound. Issue
   #51.
 - There is no recording capability and no server-enforced indicator, so the
